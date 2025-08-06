@@ -134,10 +134,20 @@
 2. Place client at increasing distance to test delivery range and delay  
 3. Test multiple clients requesting content concurrently  
 4. Validate multi-hop success and throughput limits
+5. Run tests for differing LoRa modem presets
+
+| Preset | Bandwidth (kHz) | SF | Data Rate (kbps) | Link Budget | Best For |
+| :---- | :---- | :---- | ----: | :---- | :---- |
+| LongFast | 250 | 11 | 1.07 | 153dB | Default |
+| MediumSlow | 250 | 10 | 1.95 | 150.5dB | Better speed |
+| MediumFast | 250 | 9 | 3.52 | 148dB | Fast with good range |
+| ShortSlow | 250 | 8 | 6.25 | 145.5dB | Fast with moderate range |
+| ShortFast | 250 | 7 | 10.94 | 143dB | Very fast, shorter range |
+| ShortTurbo | 500 | 7 | 21.88 | 140dB | Maximum speed, minimum range |
 
 **Deliverables:**
 
-* Measured transmission times and success rates  
+* Measured transmission times and success rates per preset 
 * Field test logs for each test condition
 
 ## Phase 6: Packaging and Deployment
