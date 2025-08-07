@@ -46,29 +46,18 @@
 **Message Example (Request)**
 
 {  
-  "dest": "server\_node\_id",  
-  "type": "custom:webreq",  
-  "payload": {  
-    "method": "GET",  
-    "path": "/index.html",  
-    "accept": "text/html",  
-    "httpVersion": "1.0"  
-  }  
+  "type": "GET",  
+  "path": "/about.html"  
 }
 
 **Message Example (Response Chunk)**
 
 {  
-  "dest": "client\_node\_id",  
-  "type": "custom:webchunk",  
-  "payload": {  
-    "status": 200,  
-    "contentType": "text/html",  
-    "part": 1,  
-    "total": 3,  
-    "httpVersion": "1.0",  
-    "body": "\<html\>\<head\>\<title\>Hello\</title\>\</head\>"  
-  }  
+  "type": "RESP",  
+  "path": "/about.html",  
+  "frag": 3,  
+  "of\_frag": 4,  
+  "data": "\<footer\>Contact us offline.\</footer\>\\n  \</body\>\\n\</html\>"  
 }
 
 ---
@@ -77,10 +66,10 @@
 
 ## Phase 1: Environment Setup
 
-1. Flash Meshtastic firmware to RAK4631 and Heltec ESP32  
+1. Flash Meshtastic firmware LILYGO T-Echo  
 2. Set up Meshtastic CLI tools on development machines  
 3. Establish working mesh communication between devices  
-4. Install Python 3, Meshtastic Python API, and dependencies on Raspberry Pi  
+4. Install Python 3, Meshtastic Python API, and dependencies
 5. Create initial `pages/index.html` file on server
 
 **Deliverables:**

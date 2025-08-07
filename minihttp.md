@@ -1,6 +1,6 @@
 # **MiniHTTP v0.1 — Simplified Mesh Web Transfer Protocol**
 
-A method for requesting a single HTML file from a server over the Meshtastic application interface.
+A method for requesting a single HTML file from a server over the Meshtastic application interface. Note: JSON is too bloated for ultra low bandwidth like this system. This will need to be refactored using protobufs for anything but this first round of proofs.
 
 ---
 
