@@ -38,6 +38,7 @@
 - **Required Python Packages:**
   - `meshtastic`
   - `pyserial`
+  - `dotenv`
   - `pubsub` (installed automatically by `meshtastic`)
 
 ## Communication Flow

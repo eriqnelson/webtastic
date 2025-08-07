@@ -16,22 +16,11 @@
 
 # Hardware Specification (First Article Build):
 
-**Server Node**
+**All Nodes**
 
-* Raspberry Pi Zero 2 W or Raspberry Pi 4  
-* RAK4631 or similar LoRa dev board (connected via UART/SPI/USB)  
-* 16GB MicroSD card
-
-**Client Node**
-
-* Heltec WiFi LoRa 32 V3 (ESP32 \+ OLED display)  
-* Optional: button input, microSD card (if local file storage is used)
-
-**Shared Components**
-
-* 915 MHz antennas (US region)  
-* USB power banks or LiPo batteries (minimum 2000 mAh)  
-* Optional: waterproof enclosures, USB-to-serial adapter for debugging
+* Any Linux device running Python 3.9+  
+* RLILYGO T-Echo (connected via UART/SPI/USB)  
+* 915 MHz antennas (US region)
 
 ---
 
@@ -82,7 +71,7 @@
 1. Define JSON request/response schema  
 2. Implement GET message structure on client  
 3. Build server-side listener that parses GET requests  
-4. Chunk HTML files into 200-byte payloads  
+4. Chunk HTML files into 122-byte payloads  
 5. Transmit chunks using ordered Meshtastic messages  
 6. On client: receive, store, and reassemble chunks in correct order
 
