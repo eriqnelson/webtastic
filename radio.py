@@ -1,3 +1,5 @@
+
+
 import meshtastic
 import meshtastic.serial_interface as serial_interface
 from pubsub import pub
@@ -5,13 +7,33 @@ from dotenv import load_dotenv; load_dotenv()
 import time
 import os
 
-DEFAULT_PORT = "/dev/ttyACM0"
 DEFAULT_CHANNEL_INDEX = int(os.getenv("DEFAULT_CHANNEL_INDEX", 1))
 
+def get_radio_interface():
+    """
+    Create a SerialInterface using connection info from .env (BLE, port, or host).
+    Priority: BLE > HOST > PORT > auto-detect
+    """
+    ble = os.getenv("MESHTASTIC_BLE")
+    host = os.getenv("MESHTASTIC_HOST")
+    port = os.getenv("MESHTASTIC_PORT")
+    # BLE connection
+    if ble:
+        iface = serial_interface.SerialInterface(ble=ble)
+    # TCP/host connection
+    elif host:
+        iface = serial_interface.SerialInterface(host=host)
+    # Serial port connection
+    elif port:
+        iface = serial_interface.SerialInterface(port=port)
+    # Auto-detect
+    else:
+        iface = serial_interface.SerialInterface()
+    return iface
+
 class RadioInterface:
-    def __init__(self, port=DEFAULT_PORT):
-        self.port = port
-        self.iface = serial_interface.SerialInterface(self.port)
+    def __init__(self):
+        self.iface = get_radio_interface()
         self._subscribed = False
 
     def send(self, message: str, channel_index: int = DEFAULT_CHANNEL_INDEX):
@@ -36,15 +58,20 @@ class RadioInterface:
         """Clean up the serial connection."""
         self.iface.close()
 
-import os
-
-def configure_channel(port=DEFAULT_PORT, index=DEFAULT_CHANNEL_INDEX):
-    """Set up a Meshtastic channel using environment variables."""
+def configure_channel(index=DEFAULT_CHANNEL_INDEX):
+    """Set up a Meshtastic channel using environment variables and connection type."""
     name = os.getenv("MINIHTTP_CHANNEL_NAME", "minihttp")
     psk = os.getenv("MINIHTTP_CHANNEL_PSK", "mistynight42")
+    ble = os.getenv("MESHTASTIC_BLE")
+    host = os.getenv("MESHTASTIC_HOST")
+    port = os.getenv("MESHTASTIC_PORT")
     import subprocess
-    subprocess.run([
-        "meshtastic",
-        "--port", port,
-        "--ch-set", f"name={name}", f"psk={psk}", "--ch-index", str(index)
-    ])
+    cmd = ["meshtastic"]
+    if ble:
+        cmd += ["--ble", ble]
+    elif host:
+        cmd += ["--host", host]
+    elif port:
+        cmd += ["--port", port]
+    cmd += ["--ch-set", f"name={name}", f"psk={psk}", "--ch-index", str(index)]
+    subprocess.run(cmd)
