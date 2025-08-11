@@ -73,6 +73,14 @@ def configure_channel(index=DEFAULT_CHANNEL_INDEX):
         cmd += ["--host", host]
     elif port:
         cmd += ["--port", port]
-    # Use correct CLI format: --ch-set name <name> psk <psk> --ch-index <index>
-    cmd += ["--ch-set", "name", name, "psk", psk, "--ch-index", str(index)]
-    subprocess.run(cmd)
+    import sys
+    # Set channel name
+    cmd_name = cmd + ["--ch-set", "name", name, "--ch-index", str(index)]
+    print(f"[DEBUG] Running command for name: {' '.join(cmd_name)}", file=sys.stderr)
+    subprocess.run(cmd_name, capture_output=True)
+    # Set channel PSK
+    cmd_psk = cmd + ["--ch-set", "psk", psk, "--ch-index", str(index)]
+    print(f"[DEBUG] Running command for psk: {' '.join(cmd_psk)}", file=sys.stderr)
+    result = subprocess.run(cmd_psk, capture_output=True, text=True)
+    print(f"[DEBUG] PSK command stdout: {result.stdout}", file=sys.stderr)
+    print(f"[DEBUG] PSK command stderr: {result.stderr}", file=sys.stderr)

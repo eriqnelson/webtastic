@@ -78,7 +78,10 @@ def start_client(radio, path, timeout=5):
 
 if __name__ == "__main__":
     from radio import RadioInterface, configure_channel
-    import time
+    import time, os
+    # Debug: print PSK type and value
+    psk = os.getenv("MINIHTTP_CHANNEL_PSK")
+    print(f"[DEBUG] MINIHTTP_CHANNEL_PSK type: {type(psk)}, value: {psk}")
     configure_channel(index=2)  # Use PSK channel 2 or higher
     radio = RadioInterface()
     path = input("Enter the file path to request (e.g. /test.html): ")

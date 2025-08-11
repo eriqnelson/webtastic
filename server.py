@@ -72,7 +72,10 @@ def start_server(radio):
 if __name__ == "__main__":
     try:
         from radio import RadioInterface, configure_channel
-        import time
+        import time, os
+        # Debug: print PSK type and value
+        psk = os.getenv("MINIHTTP_CHANNEL_PSK")
+        print(f"[DEBUG] MINIHTTP_CHANNEL_PSK type: {type(psk)}, value: {psk}")
         configure_channel(index=2)  # Use PSK channel 2 or higher
         radio = RadioInterface()
         print("Starting MiniHTTP server...")
