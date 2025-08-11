@@ -11,21 +11,21 @@ DEFAULT_CHANNEL_INDEX = int(os.getenv("DEFAULT_CHANNEL_INDEX", 1))
 
 def get_radio_interface():
     """
-    Create a SerialInterface using connection info from .env (BLE, port, or host).
-    Priority: BLE > HOST > PORT > auto-detect
+    Create a SerialInterface using connection info from .env (BLE, host, or devPath).
+    Priority: BLE > HOST > DEVPATH > auto-detect
     """
     ble = os.getenv("MESHTASTIC_BLE")
     host = os.getenv("MESHTASTIC_HOST")
-    port = os.getenv("MESHTASTIC_PORT")
+    devpath = os.getenv("MESHTASTIC_PORT")
     # BLE connection
     if ble:
         iface = serial_interface.SerialInterface(ble=ble)
     # TCP/host connection
     elif host:
         iface = serial_interface.SerialInterface(host=host)
-    # Serial port connection
-    elif port:
-        iface = serial_interface.SerialInterface(port=port)
+    # Serial device path connection
+    elif devpath:
+        iface = serial_interface.SerialInterface(devPath=devpath)
     # Auto-detect
     else:
         iface = serial_interface.SerialInterface()
