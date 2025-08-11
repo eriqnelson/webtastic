@@ -71,8 +71,9 @@ def start_server(radio):
 # Only run the server if this script is executed directly
 if __name__ == "__main__":
     try:
-        from radio import RadioInterface
+        from radio import RadioInterface, configure_channel
         import time
+        configure_channel(index=2)  # Use PSK channel 2 or higher
         radio = RadioInterface()
         print("Starting MiniHTTP server...")
         start_server(radio.iface)
