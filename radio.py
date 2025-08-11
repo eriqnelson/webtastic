@@ -1,11 +1,9 @@
-
-
+from dotenv import load_dotenv; load_dotenv()
+import os
 import meshtastic
 import meshtastic.serial_interface as serial_interface
 from pubsub import pub
-from dotenv import load_dotenv; load_dotenv()
 import time
-import os
 
 DEFAULT_CHANNEL_INDEX = int(os.getenv("DEFAULT_CHANNEL_INDEX", 1))
 
@@ -32,6 +30,45 @@ def get_radio_interface():
     return iface
 
 class RadioInterface:
+    def read_channel_config(self, index=DEFAULT_CHANNEL_INDEX):
+        """Read the channel config for the given index using meshtastic --info and return a dict with name and psk (or None if not found)."""
+        import subprocess
+        cmd = ["meshtastic", "--info"]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        for line in result.stdout.splitlines():
+            if f"Index {index}:" in line:
+                # Example line: Index 1: SECONDARY psk=secret { "psk": "...", "name": "...", ... }
+                import re, json
+                m = re.search(r'\{(.+)\}', line)
+                if m:
+                    try:
+                        # Convert to valid JSON
+                        d = json.loads('{' + m.group(1) + '}')
+                        return {"name": d.get("name", ""), "psk": d.get("psk", "")}
+                    except Exception:
+                        pass
+                return None
+        return None
+
+    def write_channel_config(self, name, psk, index=DEFAULT_CHANNEL_INDEX, ble=None, host=None, port=None):
+        """Delete and overwrite the channel at the given index with the provided name and PSK."""
+        import subprocess
+        cmd = ["meshtastic"]
+        if ble:
+            cmd += ["--ble", ble]
+        if host:
+            cmd += ["--host", host]
+        if port:
+            cmd += ["--port", port]
+        # Delete channel
+        del_cmd = cmd + ["--ch-index", str(index), "--ch-del"]
+        subprocess.run(del_cmd, capture_output=True, text=True)
+        # Set name
+        cmd_name = cmd + ["--ch-set", "name", name, "--ch-index", str(index)]
+        subprocess.run(cmd_name, capture_output=True, text=True)
+        # Set PSK
+        cmd_psk = cmd + ["--ch-set", "psk", psk, "--ch-index", str(index)]
+        subprocess.run(cmd_psk, capture_output=True, text=True)
     def __init__(self):
         self.iface = get_radio_interface()
         self._subscribed = False
@@ -60,27 +97,14 @@ class RadioInterface:
 
 def configure_channel(index=DEFAULT_CHANNEL_INDEX):
     """Set up a Meshtastic channel using environment variables and connection type."""
-    name = os.getenv("MINIHTTP_CHANNEL_NAME", "webtastic")
-    psk = os.getenv("MINIHTTP_CHANNEL_PSK", "0x8e2a4b7c5d1e3f6a9b0c2d4e6f8a1b3c5d7e9f0a2b4c6d8e0f1a3b5c7d9e1f2a")
+    name = os.getenv("MINIHTTP_CHANNEL_NAME", "minihttp")
+    psk = os.getenv("MINIHTTP_CHANNEL_PSK", "mistynight42")
     ble = os.getenv("MESHTASTIC_BLE")
     host = os.getenv("MESHTASTIC_HOST")
     port = os.getenv("MESHTASTIC_PORT")
-    import subprocess
-    cmd = ["meshtastic"]
-    if ble:
-        cmd += ["--ble", ble]
-    elif host:
-        cmd += ["--host", host]
-    elif port:
-        cmd += ["--port", port]
-    import sys
-    # Set channel name
-    cmd_name = cmd + ["--ch-set", "name", name, "--ch-index", str(index)]
-    print(f"[DEBUG] Running command for name: {' '.join(cmd_name)}", file=sys.stderr)
-    subprocess.run(cmd_name, capture_output=True)
-    # Set channel PSK
-    cmd_psk = cmd + ["--ch-set", "psk", psk, "--ch-index", str(index)]
-    print(f"[DEBUG] Running command for psk: {' '.join(cmd_psk)}", file=sys.stderr)
-    result = subprocess.run(cmd_psk, capture_output=True, text=True)
-    print(f"[DEBUG] PSK command stdout: {result.stdout}", file=sys.stderr)
-    print(f"[DEBUG] PSK command stderr: {result.stderr}", file=sys.stderr)
+    radio = RadioInterface()
+    # Read current config
+    current = radio.read_channel_config(index=index)
+    # Only write if needed
+    if not current or current.get("name") != name or current.get("psk") != psk:
+        radio.write_channel_config(name, psk, index=index, ble=ble, host=host, port=port)
