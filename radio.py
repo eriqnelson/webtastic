@@ -73,5 +73,6 @@ def configure_channel(index=DEFAULT_CHANNEL_INDEX):
         cmd += ["--host", host]
     elif port:
         cmd += ["--port", port]
-    cmd += ["--ch-set", f"name={name}", f"psk={psk}", "--ch-index", str(index)]
+    # Use correct CLI format: --ch-set name <name> psk <psk> --ch-index <index>
+    cmd += ["--ch-set", "name", name, "psk", psk, "--ch-index", str(index)]
     subprocess.run(cmd)
