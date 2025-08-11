@@ -60,8 +60,8 @@ class RadioInterface:
 
 def configure_channel(index=DEFAULT_CHANNEL_INDEX):
     """Set up a Meshtastic channel using environment variables and connection type."""
-    name = os.getenv("MINIHTTP_CHANNEL_NAME", "minihttp")
-    psk = os.getenv("MINIHTTP_CHANNEL_PSK", "mistynight42")
+    name = os.getenv("MINIHTTP_CHANNEL_NAME", "webtastic")
+    psk = os.getenv("MINIHTTP_CHANNEL_PSK", "0x8e2a4b7c5d1e3f6a9b0c2d4e6f8a1b3c5d7e9f0a2b4c6d8e0f1a3b5c7d9e1f2a")
     ble = os.getenv("MESHTASTIC_BLE")
     host = os.getenv("MESHTASTIC_HOST")
     port = os.getenv("MESHTASTIC_PORT")
