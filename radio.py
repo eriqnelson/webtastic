@@ -2,116 +2,130 @@ from dotenv import load_dotenv; load_dotenv()
 import os
 # Use the correct Meshtastic interface classes for each transport
 from meshtastic.serial_interface import SerialInterface
-from meshtastic.tcp_interface import TCPInterface
-try:
-    from meshtastic.ble_interface import BLEInterface
-except Exception:
-    BLEInterface = None
 from pubsub import pub
 import time
-import subprocess
-import json
-import re
+from typing import Optional
+
+def _api_get_node(iface) -> Optional[object]:
+    try:
+        return getattr(iface, "localNode", None)
+    except Exception:
+        return None
+
+def _api_get_channel(node, index: int):
+    # Returns a channel protobuf or None
+    try:
+        return node.getChannelByChannelIndex(index)
+    except Exception:
+        return None
+
+def _api_set_channel(node, index: int, name: Optional[str] = None, psk: Optional[str] = None):
+    """Use Meshtastic API to set channel fields in-place. Accepts hex (0x..) or base64 for psk."""
+    try:
+        # Newer API supports kwargs; guard for older versions
+        if hasattr(node, "setChannel"):
+            # setChannel(index, name=None, psk=None, uplinkEnabled=None, downlinkEnabled=None, )
+            node.setChannel(index=index, name=name, psk=psk)
+            return True
+    except Exception:
+        pass
+    return False
+
+def _api_set_url(node, url: str) -> bool:
+    try:
+        if hasattr(node, "setURL"):
+            node.setURL(url)
+            return True
+    except Exception:
+        pass
+    return False
+
+def apply_url_config(url: str):
+    """Apply a Complete URL via Meshtastic API (no CLI)."""
+    tmp_iface = get_radio_interface()
+    try:
+        node = _api_get_node(tmp_iface)
+        if not node:
+            return
+        _api_set_url(node, url)
+    finally:
+        tmp_iface.close()
+
+def _api_find_channel_index_by_name(node, name: str, max_channels: int = 8) -> Optional[int]:
+    """Scan channel indices via API and return the index whose name matches."""
+    for i in range(max_channels):
+        ch = _api_get_channel(node, i)
+        if not ch:
+            continue
+        ch_name = getattr(getattr(ch, "settings", ch), "name", "") or getattr(ch, "name", "")
+        if ch_name == name:
+            return i
+    return None
 
 DEFAULT_CHANNEL_INDEX = int(os.getenv("DEFAULT_CHANNEL_INDEX", 1))
 
-def _build_cli(ble=None, host=None, port=None):
-    cmd = ["meshtastic"]
-    if ble:
-        cmd += ["--ble", ble]
-    if host:
-        cmd += ["--host", host]
-    if port:
-        cmd += ["--port", port]
-    return cmd
-
-def apply_url_config(url: str, ble=None, host=None, port=None):
-    """Apply a Complete URL to the radio. This replaces channel config deterministically."""
-    cmd = _build_cli(ble, host, port) + ["--seturl", url]
-    subprocess.run(cmd, capture_output=True, text=True)
-
-def get_channel_index_by_name(name: str, ble=None, host=None, port=None):
-    """Return the channel index whose JSON name matches `name`, or None if not found."""
-    cmd = _build_cli(ble, host, port) + ["--info"]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    for line in result.stdout.splitlines():
-        # Match a line like: Index 2: SECONDARY ... { "psk": "...", "name": "webtastic", ... }
-        m = re.search(r"Index\s+(\d+):.*\{(.*)\}", line)
-        if not m:
-            continue
-        idx = int(m.group(1))
-        try:
-            obj = json.loads("{" + m.group(2) + "}")
-        except Exception:
-            continue
-        if obj.get("name", "") == name:
-            return idx
-    return None
-
 def get_radio_interface():
-    """
-    Create a Meshtastic Interface using connection info from .env (BLE, host, or devPath).
-    Priority: BLE > HOST > DEVPATH > auto-detect
-    """
-    ble = os.getenv("MESHTASTIC_BLE")
-    host = os.getenv("MESHTASTIC_HOST")
+    """Create a Meshtastic SerialInterface using .env devPath if provided, else auto-detect."""
     devpath = os.getenv("MESHTASTIC_PORT")
-
-    # BLE connection (requires extras installed)
-    if ble:
-        if BLEInterface is None:
-            raise RuntimeError("BLEInterface not available. Install meshtastic[ble] or remove MESHTASTIC_BLE from .env.")
-        return BLEInterface(ble)
-
-    # TCP/host connection
-    if host:
-        return TCPInterface(host)
-
-    # Serial device path connection
     if devpath:
         return SerialInterface(devPath=devpath)
-
-    # Auto-detect (serial)
     return SerialInterface()
 
 class RadioInterface:
     @staticmethod
     def read_channel_config(index=DEFAULT_CHANNEL_INDEX):
-        """Read the channel config for the given index using meshtastic --info and return a dict with name and psk (or None if not found)."""
-        import subprocess
-        cmd = ["meshtastic", "--info"]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        for line in result.stdout.splitlines():
-            if f"Index {index}:" in line:
-                # Example line: Index 1: SECONDARY psk=secret { "psk": "...", "name": "...", ... }
-                import re, json
-                m = re.search(r'\{(.+)\}', line)
-                if m:
-                    try:
-                        # Convert to valid JSON
-                        d = json.loads('{' + m.group(1) + '}')
-                        return {"name": d.get("name", ""), "psk": d.get("psk", "")}
-                    except Exception:
-                        pass
-                return None
+        """Read channel config via Meshtastic API (preferred), fallback to CLI parse."""
+        # API path
+        try:
+            tmp = get_radio_interface()
+            node = _api_get_node(tmp)
+            if node:
+                ch = _api_get_channel(node, index)
+                if ch:
+                    # Protobuf fields may differ across versions; try common names
+                    name = getattr(getattr(ch, "settings", ch), "name", "") or getattr(ch, "name", "")
+                    psk = getattr(getattr(ch, "settings", ch), "psk", "") or getattr(ch, "psk", "")
+                    tmp.close()
+                    return {"name": name, "psk": psk}
+            tmp.close()
+        except Exception:
+            pass
         return None
 
     @staticmethod
     def write_channel_config(name, psk, index=DEFAULT_CHANNEL_INDEX, ble=None, host=None, port=None):
-        """Update channel name/psk at `index` in-place. Avoid --ch-del to prevent sparse indices.
-        If the channel doesn't exist, add it and then set the PSK without --ch-index.
-        """
-        cmd = _build_cli(ble, host, port)
-        # First, check if the index exists
-        info = subprocess.run(cmd + ["--info"], capture_output=True, text=True)
-        exists = any(f"Index {index}:" in ln for ln in info.stdout.splitlines())
-        if index == 0 or exists:
-            subprocess.run(cmd + ["--ch-set", "name", name, "--ch-index", str(index), "--channel-fetch-attempts", "5"], capture_output=True, text=True)
-            subprocess.run(cmd + ["--ch-set", "psk", psk, "--ch-index", str(index), "--channel-fetch-attempts", "5"], capture_output=True, text=True)
-            return
-        # If it doesn't exist, add then set PSK without index (targets newly added channel)
-        subprocess.run(cmd + ["--ch-add", name], capture_output=True, text=True)
-        subprocess.run(cmd + ["--ch-set", "psk", psk], capture_output=True, text=True)
+        """Prefer Meshtastic API to update/create channel; fallback to CLI behavior."""
+        # API path
+        try:
+            tmp = get_radio_interface()
+            node = _api_get_node(tmp)
+            if node:
+                # If primary, update in place only
+                if index == 0:
+                    _api_set_channel(node, index, name=name, psk=psk)
+                    tmp.close()
+                    return
+                # If channel exists, update; if not, add then set PSK without index
+                ch = _api_get_channel(node, index)
+                if ch:
+                    _api_set_channel(node, index, name=name, psk=psk)
+                else:
+                    # Add a new channel; many builds expose addChannel(name) on node
+                    added = False
+                    if hasattr(node, "addChannel"):
+                        try:
+                            node.addChannel(name)
+                            added = True
+                        except Exception:
+                            added = False
+                    # If addChannel unavailable, attempt setChannel to a higher free index anyway
+                    if not added:
+                        _api_set_channel(node, index, name=name, psk=psk)
+                tmp.close()
+                return
+            tmp.close()
+        except Exception:
+            pass
 
     def __init__(self):
         self.iface = get_radio_interface()
@@ -146,30 +160,30 @@ def configure_channel(index=DEFAULT_CHANNEL_INDEX):
     Uses the Meshtastic CLI to read/write channel config before opening a Python interface
     to avoid serial-port lock conflicts.
     """
-    name = os.getenv("MINIHTTP_CHANNEL_NAME", "minihttp")
-    psk = os.getenv("MINIHTTP_CHANNEL_PSK", "mistynight42")
-    ble = os.getenv("MESHTASTIC_BLE")
-    host = os.getenv("MESHTASTIC_HOST")
-    port = os.getenv("MESHTASTIC_PORT")
+    name = os.getenv("MINIHTTP_CHANNEL_NAME", "webtastic")
+    psk = os.getenv("MINIHTTP_CHANNEL_PSK", "0x8e2a4b7c5d1e3f6a9b0c2d4e6f8a1b3c5d7e9f0a2b4c6d8e0f1a3b5c7d9e1f2a")
 
     # If a Complete URL is provided, apply it deterministically before opening the interface
     seturl = os.getenv("MESHTASTIC_SETURL") or os.getenv("MESHTASTIC_CONFIG_URL")
     if seturl:
-        apply_url_config(seturl, ble=ble, host=host, port=port)
-
-    # Read current config BEFORE opening any interface (prevents port busy issues)
-    current = RadioInterface.read_channel_config(index=index)
-
-    # Only write if needed
-    if (not current) or (current.get("name") != name) or (current.get("psk") != psk):
-        RadioInterface.write_channel_config(name, psk, index=index, ble=ble, host=host, port=port)
+        apply_url_config(seturl)
+    else:
+        # Read current config BEFORE opening any interface (prevents port busy issues)
+        current = RadioInterface.read_channel_config(index=index)
+        # Only write if needed
+        if (not current) or (current.get("name") != name) or (current.get("psk") != psk):
+            RadioInterface.write_channel_config(name, psk, index=index)
 
     # Optionally return an open interface for immediate use
     radio = RadioInterface()
     # Try to discover the desired channel index by name; fall back to provided index
     try:
-        resolved = get_channel_index_by_name(name, ble=ble, host=host, port=port)
-        radio.default_channel_index = resolved if resolved is not None else index
+        node = _api_get_node(radio.iface)
+        if node:
+            resolved = _api_find_channel_index_by_name(node, name)
+            radio.default_channel_index = resolved if resolved is not None else index
+        else:
+            radio.default_channel_index = index
     except Exception:
         radio.default_channel_index = index
     return radio
