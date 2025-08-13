@@ -1,8 +1,33 @@
-
-
 # server.py: MiniHTTP server entry point
 from listener import start_listener
 import json
+
+# Helpers to work with either RadioInterface or a raw Meshtastic iface
+import os
+
+def _iface_of(r):
+    return getattr(r, "iface", r)
+
+def _default_channel_index():
+    try:
+        return int(os.getenv("DEFAULT_CHANNEL_INDEX", 1))
+    except Exception:
+        return 1
+
+def _send_text(r, text):
+    # Prefer RadioInterface.send() which uses resolved default_channel_index
+    if hasattr(r, "send"):
+        r.send(text)
+        return
+    # Fallback to raw iface; include a channelIndex if we can
+    try:
+        ch = getattr(r, "default_channel_index", None)
+        if ch is None:
+            ch = _default_channel_index()
+        r.sendText(text, channelIndex=ch)
+    except Exception:
+        # Last-ditch: send without explicit channel index
+        r.sendText(text)
 
 def create_response_envelopes(path, fragments):
     """
@@ -63,23 +88,23 @@ def start_server(radio):
     def handle_message(message):
         responses = handle_get_message(message)
         for resp in responses:
-            radio.sendText(json.dumps(resp))
+            _send_text(radio, json.dumps(resp))
 
-    start_listener(radio, handle_message)
+    start_listener(_iface_of(radio), handle_message)
 
 
 # Only run the server if this script is executed directly
 if __name__ == "__main__":
     try:
-        from radio import RadioInterface, configure_channel
+        from radio import RadioInterface, configure_channel, DEFAULT_CHANNEL_INDEX
         import time, os
         # Debug: print PSK type and value
         psk = os.getenv("MINIHTTP_CHANNEL_PSK")
         print(f"[DEBUG] MINIHTTP_CHANNEL_PSK type: {type(psk)}, value: {psk}")
-        configure_channel(index=2)  # Use PSK channel 2 or higher
-        radio = RadioInterface()
+        # Configure the channel first (uses CLI), then open a single interface
+        radio = configure_channel(index=DEFAULT_CHANNEL_INDEX)
         print("Starting MiniHTTP server...")
-        start_server(radio.iface)
+        start_server(radio)
         while True:
             time.sleep(1)
     except Exception as e:

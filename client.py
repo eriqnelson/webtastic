@@ -4,6 +4,31 @@ import os
 
 received_fragments = {}
 
+# Helpers to work with either RadioInterface or a raw Meshtastic iface
+def _iface_of(r):
+    return getattr(r, "iface", r)
+
+def _default_channel_index():
+    try:
+        return int(os.getenv("DEFAULT_CHANNEL_INDEX", 1))
+    except Exception:
+        return 1
+
+def _send_text(r, text):
+    # Prefer RadioInterface.send() which uses resolved default_channel_index
+    if hasattr(r, "send"):
+        r.send(text)
+        return
+    # Fallback to raw iface; include a channelIndex
+    try:
+        ch = getattr(r, "default_channel_index", None)
+        if ch is None:
+            ch = _default_channel_index()
+        r.sendText(text, channelIndex=ch)
+    except Exception:
+        # Last-ditch: send without explicit channel index
+        r.sendText(text)
+
 def send_get_request(radio, path, frag=None):
     """
     Sends a GET request for the given file path, optionally for a specific fragment.
@@ -14,7 +39,7 @@ def send_get_request(radio, path, frag=None):
     }
     if frag is not None:
         message["frag"] = frag
-    radio.sendText(json.dumps(message))
+    _send_text(radio, json.dumps(message))
 
 
 import threading
@@ -53,7 +78,7 @@ def start_client(radio, path, timeout=5):
             print(f"Saved to downloads/{filename}")
             complete.set()
 
-    start_listener(radio, handle_response)
+    start_listener(_iface_of(radio), handle_response)
 
     # Initial request
     send_get_request(radio, path)
@@ -77,18 +102,18 @@ def start_client(radio, path, timeout=5):
 
 
 if __name__ == "__main__":
-    from radio import RadioInterface, configure_channel
+    from radio import RadioInterface, configure_channel, DEFAULT_CHANNEL_INDEX
     import time, os
     # Debug: print PSK type and value
     psk = os.getenv("MINIHTTP_CHANNEL_PSK")
     print(f"[DEBUG] MINIHTTP_CHANNEL_PSK type: {type(psk)}, value: {psk}")
-    configure_channel(index=2)  # Use PSK channel 2 or higher
-    radio = RadioInterface()
+    # Configure the channel first (uses CLI), then open a single interface
+    radio = configure_channel(index=DEFAULT_CHANNEL_INDEX)
     path = input("Enter the file path to request (e.g. /test.html): ")
-    send_get_request(radio.iface, path)
+    send_get_request(radio, path)
     print("Waiting for response... (Ctrl+C to exit)")
     try:
-        start_client(radio.iface, path)
+        start_client(radio, path)
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
