@@ -2,6 +2,16 @@ import json
 import os
 from pubsub import pub
 
+import threading
+import time
+
+
+def _to_int(x, default=None):
+    try:
+        return int(x)
+    except Exception:
+        return default
+
 received_fragments = {}
 
 # Normalize incoming packets/messages to a JSON dict we expect
@@ -72,13 +82,12 @@ def send_get_request(radio, path, frag=None):
     _send_text(radio, json.dumps(message))
 
 
-import threading
-import time
-
 def start_client(radio, path, timeout=5):
     """
     Starts the MiniHTTP client, listens for fragments, reassembles the file, and re-requests missing fragments.
     """
+    lock = threading.Lock()
+    seen_ids = set()
     complete = threading.Event()
     missing_fragments = set()
 
@@ -88,31 +97,50 @@ def start_client(radio, path, timeout=5):
         if message.get("path") != path:
             return
 
-        key = (message["path"], message["of_frag"])
-        frag_list = received_fragments.setdefault(key, [None] * message["of_frag"])
+        total = _to_int(message.get("of_frag"), 0)
+        frag_no = _to_int(message.get("frag"), 0)
+        if total <= 0 or frag_no <= 0 or frag_no > total:
+            print(f"[WARN] Ignoring malformed fragment: frag={frag_no} of={total}")
+            return
 
-        frag_index = message["frag"] - 1
-        frag_list[frag_index] = message["data"]
+        # De-dupe on (path, of_frag, frag, data_len)
+        msg_id = (message.get("path"), total, frag_no, len(message.get("data", "")))
+        with lock:
+            if msg_id in seen_ids:
+                print(f"[DEBUG] Duplicate fragment ignored: {frag_no}/{total}")
+                return
+            seen_ids.add(msg_id)
 
-        if all(frag_list):
-            html = ''.join(frag_list)
-            print(f"\nReceived complete file:\n\n{html}\n")
+            key = (message["path"], total)
+            frag_list = received_fragments.setdefault(key, [None] * total)
+            frag_index = frag_no - 1
+            frag_list[frag_index] = message.get("data", "")
+            have = sum(1 for x in frag_list if x is not None)
+            missing = [i+1 for i, v in enumerate(frag_list) if v is None]
+            print(f"[FRAG] {frag_no}/{total} received | have={have}/{total} missing={missing}")
 
-            # Ensure downloads directory exists
-            os.makedirs("downloads", exist_ok=True)
+            if have == total:
+                html = ''.join(frag_list)
+                print(f"\nReceived complete file ({total} frags):\n\n{html}\n")
 
-            # Derive filename from path
-            filename = os.path.basename(path)
-            with open(os.path.join("downloads", filename), "w", encoding="utf-8") as f:
-                f.write(html)
-            print(f"Saved to downloads/{filename}")
-            complete.set()
+                # Ensure downloads directory exists
+                os.makedirs("downloads", exist_ok=True)
+
+                # Derive filename from path
+                filename = os.path.basename(path or "index.html")
+                outpath = os.path.join("downloads", filename)
+                with open(outpath, "w", encoding="utf-8") as f:
+                    f.write(html)
+                print(f"Saved to {outpath}")
+                complete.set()
 
     iface = _iface_of(radio)
 
     def _handle_raw(raw):
         print(f"[DEBUG] Client RX raw: {raw}")
         ok, payload, reason = _coerce_to_dict(raw)
+        if ok and isinstance(payload, dict) and payload.get("type") == "RESP":
+            print(f"[DEBUG] Client RESP: path={payload.get('path')} frag={payload.get('frag')}/{payload.get('of_frag')} len={len(payload.get('data',''))}")
         if not ok:
             print(f"[WARN] Client ignoring message: {reason}")
             return
@@ -132,6 +160,10 @@ def start_client(radio, path, timeout=5):
     try:
         pub.subscribe(lambda packet=None, interface=None, **kw: _handle_raw(packet), "meshtastic.receive")
         print("[INFO] Client subscribed to meshtastic.receive")
+        pub.subscribe(lambda packet=None, interface=None, **kw: _handle_raw(packet), "meshtastic.receive.text")
+        print("[INFO] Client also subscribed to meshtastic.receive.text")
+        pub.subscribe(lambda packet=None, interface=None, **kw: _handle_raw(packet), "meshtastic.receive.data")
+        print("[INFO] Client also subscribed to meshtastic.receive.data")
     except Exception as e:
         print(f"[WARN] Client pubsub subscribe failed: {e}")
 
