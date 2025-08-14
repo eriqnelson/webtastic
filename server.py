@@ -288,6 +288,23 @@ def start_server(radio):
     except Exception as e:
         print(f"[WARN] Could not subscribe to meshtastic.receive.data: {e}")
 
+    # FINAL SAFETY NET: log ANY pubsub traffic so we can see what's actually emitted
+    try:
+        def _on_all_topics(topic=pub.AUTO_TOPIC, **kwargs):
+            try:
+                tname = topic.getName() if hasattr(topic, 'getName') else str(topic)
+            except Exception:
+                tname = str(topic)
+            print(f"[DEBUG] pubsub ALL_TOPICS: {tname} kwargs={list(kwargs.keys())}")
+            # If a 'packet' is present, try to handle it
+            pkt = kwargs.get('packet')
+            if pkt is not None:
+                handle_message(pkt)
+        pub.subscribe(_on_all_topics, pub.ALL_TOPICS)
+        print("[INFO] Subscribed to pub.ALL_TOPICS (debug)")
+    except Exception as e:
+        print(f"[WARN] Could not subscribe to pub.ALL_TOPICS: {e}")
+
 
 # Only run the server if this script is executed directly
 if __name__ == "__main__":
