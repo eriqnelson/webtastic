@@ -253,6 +253,26 @@ def start_server(radio):
         print(f"[DEBUG] pubsub receive packet: {packet}")
         handle_message(packet)
 
+    # Also listen for connection events (be tolerant of topic arg specs)
+    def _on_connection_established(**kwargs):
+        print("[INFO] PubSub: connection established")
+        try:
+            # small hello to confirm TX path on connect
+            hello = json.dumps({"type": "RESP", "path": "/health", "frag": 1, "of_frag": 1, "data": "server_online"})
+            _send_text(radio, hello)
+        except Exception as e:
+            print(f"[WARN] hello-on-connect failed: {e}")
+
+    def _on_connection_lost(**kwargs):
+        print("[WARN] PubSub: connection lost")
+
+    try:
+        pub.subscribe(_on_connection_established, "meshtastic.connection.established")
+        pub.subscribe(_on_connection_lost, "meshtastic.connection.lost")
+        print("[INFO] Subscribed to connection events")
+    except Exception as e:
+        print(f"[WARN] Could not subscribe to connection events: {e}")
+
     # Subscribe to the structured packet stream
     pub.subscribe(_on_any, "meshtastic.receive")
 
