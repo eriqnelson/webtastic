@@ -21,6 +21,9 @@ import time
 import threading
 import traceback
 
+from pathlib import Path
+from urllib.parse import unquote
+
 VERBOSE = True  # set False to quiet non-JSON traffic
 
 TRUTHY = {"1", "true", "yes", "on", "y"}
@@ -79,6 +82,11 @@ def main():
     # Diagnostics
     dev = getattr(iface, 'devPath', None) or getattr(iface, 'port', None)
     print(f"[INFO] Using serial port: {dev}")
+
+    base_dir = Path(__file__).resolve().parent
+    html_dir = base_dir / 'html'
+    print(f"[INFO] Base dir: {base_dir}")
+    print(f"[INFO] HTML dir: {html_dir} exists={html_dir.exists()}")
 
     # Optionally print a compact node list for name lookup
     shortnames = {}
@@ -139,17 +147,37 @@ def main():
                     path = req.get('path') or '/'
                     frag = req.get('frag')
 
-                    # Normalize filesystem path: allow "/foo.html" or "foo.html" or "/html/foo.html"
-                    if path.startswith('/html/'):
-                        fs_path = path.lstrip('/')  # "html/foo.html"
-                    elif path.startswith('/'):
-                        fs_path = f"html{path}"  # "html/foo.html"
+                    # Normalize and secure the filesystem path
+                    raw_path = unquote(path).strip()
+                    if raw_path.startswith('/html/'):
+                        rel_path = raw_path[len('/html/'):]
                     else:
-                        fs_path = os.path.join('html', path)  # "html/foo.html"
+                        rel_path = raw_path.lstrip('/')
+                    # Prevent path traversal
+                    candidate = (html_dir / rel_path).resolve()
+                    if not str(candidate).startswith(str(html_dir.resolve())):
+                        err = json.dumps({
+                            "type": "RESP",
+                            "path": path,
+                            "frag": 1,
+                            "of_frag": 1,
+                            "data": "400: invalid path"
+                        })
+                        print(f"[WARN] Rejected path traversal: {candidate}")
+                        _send_text(radio, iface, err)
+                        return
 
+                    print(f"[INFO] FS lookup: req='{path}' → abs='{candidate}'")
+
+                    # Try reading and fragmenting
                     try:
-                        frags = fragment_html_file(fs_path)
+                        frags = fragment_html_file(str(candidate))
                     except FileNotFoundError:
+                        # Extra debug to show what actually exists
+                        try:
+                            listing = ', '.join(sorted(p.name for p in html_dir.iterdir()))
+                        except Exception:
+                            listing = '(unavailable)'
                         err = json.dumps({
                             "type": "RESP",
                             "path": path,
@@ -157,7 +185,8 @@ def main():
                             "of_frag": 1,
                             "data": f"404: {path} not found"
                         })
-                        print(f"[WARN] File not found: {fs_path}")
+                        print(f"[WARN] File not found: {candidate}")
+                        print(f"[WARN] HTML dir exists={html_dir.exists()} contents=[{listing}]")
                         _send_text(radio, iface, err)
                         return
 
