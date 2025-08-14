@@ -313,6 +313,29 @@ def start_server(radio):
     except Exception as e:
         print(f"[WARN] PubSub subscribe failed: {e}")
 
+    # Also subscribe to versioned receive topics some firmware emits
+    try:
+        def _on_pub_text(packet=None, interface=None, **kw):
+            print("[PUBSB.text]")
+            pkt = packet or kw.get('packet') or kw.get('text') or kw.get('data')
+            if pkt is not None:
+                handle_message(pkt)
+        pub.subscribe(_on_pub_text, "meshtastic.receive.text")
+        print("[INFO] Also subscribed to meshtastic.receive.text (early)")
+    except Exception as e:
+        print(f"[WARN] PubSub subscribe (.text) failed: {e}")
+
+    try:
+        def _on_pub_data(packet=None, interface=None, **kw):
+            print("[PUBSB.data]")
+            pkt = packet or kw.get('packet') or kw.get('text') or kw.get('data')
+            if pkt is not None:
+                handle_message(pkt)
+        pub.subscribe(_on_pub_data, "meshtastic.receive.data")
+        print("[INFO] Also subscribed to meshtastic.receive.data (early)")
+    except Exception as e:
+        print(f"[WARN] PubSub subscribe (.data) failed: {e}")
+
     # Log when the library signals that the connection to the radio is established
     try:
         def _on_conn_established(interface=None, topic=pub.AUTO_TOPIC):
