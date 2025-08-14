@@ -4,6 +4,7 @@ import traceback
 import threading
 import time
 from pubsub import pub
+from typing import Optional
 def _coerce_to_dict(msg):
     """Try to turn various message shapes into a dict with keys we expect.
     Accepts raw JSON string, Meshtastic decoded packet dicts, or already-JSON dicts.
@@ -51,6 +52,27 @@ def _default_channel_index():
         return int(os.getenv("DEFAULT_CHANNEL_INDEX", 1))
     except Exception:
         return 1
+
+def _api_get_node(iface):
+    try:
+        return getattr(iface, "localNode", None)
+    except Exception:
+        return None
+
+def _api_get_channel(node, index: int):
+    try:
+        return node.getChannelByChannelIndex(index)
+    except Exception:
+        return None
+
+def _channel_info_dict(ch, index: int) -> Optional[dict]:
+    if not ch:
+        return None
+    s = getattr(ch, "settings", ch)
+    name = getattr(s, "name", "") or getattr(ch, "name", "")
+    psk = getattr(s, "psk", "") or getattr(ch, "psk", "")
+    is_primary = getattr(ch, "isPrimary", False) or getattr(s, "isPrimary", False)
+    return {"index": index, "name": name, "psk_len": len(psk), "primary": is_primary}
 
 def _send_text(r, text):
     """Always send with an explicit channel index so we don't rely on wrapper defaults."""
@@ -150,6 +172,29 @@ def start_server(radio):
         print(f"[INFO] Interface: {tname} dev={dev}")
     except Exception:
         pass
+
+    # Read-only dump of node and channels for visibility
+    try:
+        node = _api_get_node(iface)
+        if node:
+            try:
+                my = getattr(node, 'myInfo', None)
+                node_id = getattr(my, 'my_node_num', None) or getattr(my, 'my_node_id', None)
+                print(f"[INFO] Node: {node_id}")
+            except Exception:
+                pass
+            any_found = False
+            for i in range(8):
+                d = _channel_info_dict(_api_get_channel(node, i), i)
+                if d:
+                    any_found = True
+                    print(f"[INFO] Channel[{d['index']}] name='{d['name']}' primary={d['primary']} psk_len={d['psk_len']}")
+            if not any_found:
+                print("[WARN] No channels reported by API (0..7)")
+        else:
+            print("[WARN] No localNode available from interface (cannot dump channels)")
+    except Exception as e:
+        print(f"[WARN] Could not dump channels: {e}")
 
     # Optional: emit a periodic beacon to verify TX path
     if os.getenv('SERVER_DEBUG_BEACON') in {'1','true','yes','on','y'}:
