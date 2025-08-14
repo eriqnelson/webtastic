@@ -2,6 +2,7 @@
 from listener import start_listener
 import json
 import traceback
+from pubsub import pub
 def _coerce_to_dict(msg):
     """Try to turn various message shapes into a dict with keys we expect.
     Accepts raw JSON string, Meshtastic decoded packet dicts, or already-JSON dicts.
@@ -128,6 +129,8 @@ def start_server(radio):
     """
     Starts the MiniHTTP server by listening for GET messages and responding.
     """
+    iface = _iface_of(radio)
+
     def handle_message(raw):
         try:
             print(f"[DEBUG] RX: {raw}")
@@ -141,7 +144,31 @@ def start_server(radio):
         except Exception:
             print("[ERROR] Exception while handling message:\n" + traceback.format_exc())
 
-    start_listener(_iface_of(radio), handle_message)
+    # Direct pubsub subscriptions (some environments deliver messages only via pubsub)
+    def _on_any(packet, interface=None):
+        print(f"[DEBUG] pubsub receive: {packet}")
+        handle_message(packet)
+
+    def _on_text(text, interface=None):
+        print(f"[DEBUG] pubsub text: {text}")
+        handle_message(text)
+
+    def _on_conn_established(topic= None):
+        print("[INFO] Meshtastic connection established")
+
+    def _on_conn_lost(topic= None):
+        print("[WARN] Meshtastic connection lost")
+
+    # Subscribe to both structured and text topics
+    pub.subscribe(_on_any, "meshtastic.receive")
+    pub.subscribe(_on_text, "meshtastic.receive.text")
+    pub.subscribe(_on_conn_established, "meshtastic.connection.established")
+    pub.subscribe(_on_conn_lost, "meshtastic.connection.lost")
+
+    print("[INFO] Subscribed to meshtastic.receive and meshtastic.receive.text topics")
+
+    # Keep the original listener for environments where it's required
+    start_listener(iface, handle_message)
 
 
 # Only run the server if this script is executed directly
