@@ -338,18 +338,18 @@ def start_server(radio):
     # Direct pubsub subscriptions (some environments deliver messages only via pubsub)
     # NOTE: The 'meshtastic.receive' root topic defines payload name 'packet';
     # all subtopics must include 'packet' in their handler signature per pypubsub rules.
-    def _on_any(**kwargs):
-        pkt = kwargs.get('packet') or kwargs.get('text') or kwargs.get('data')
-        print(f"[DEBUG] pubsub receive kwargs={list(kwargs.keys())} packet={pkt}")
+    def _on_any(packet=None, interface=None, **kwargs):
+        print(f"[DEBUG] pubsub receive kwargs={list(kwargs.keys())}")
+        pkt = packet or kwargs.get('text') or kwargs.get('data')
         if pkt is not None:
             handle_message(pkt)
     pub.subscribe(_on_any, "meshtastic.receive")
     print("[INFO] Subscribed to meshtastic.receive")
 
     try:
-        def _on_any_text(**kwargs):
-            pkt = kwargs.get('packet') or kwargs.get('text') or kwargs.get('data')
-            print(f"[DEBUG] pubsub receive .text kwargs={list(kwargs.keys())} packet={pkt}")
+        def _on_any_text(packet=None, interface=None, **kwargs):
+            print(f"[DEBUG] pubsub receive .text kwargs={list(kwargs.keys())}")
+            pkt = packet or kwargs.get('text') or kwargs.get('data')
             if pkt is not None:
                 handle_message(pkt)
         pub.subscribe(_on_any_text, "meshtastic.receive.text")
@@ -358,9 +358,9 @@ def start_server(radio):
         print(f"[WARN] Could not subscribe to meshtastic.receive.text: {e}")
 
     try:
-        def _on_any_data(**kwargs):
-            pkt = kwargs.get('packet') or kwargs.get('text') or kwargs.get('data')
-            print(f"[DEBUG] pubsub receive .data kwargs={list(kwargs.keys())} packet={pkt}")
+        def _on_any_data(packet=None, interface=None, **kwargs):
+            print(f"[DEBUG] pubsub receive .data kwargs={list(kwargs.keys())}")
+            pkt = packet or kwargs.get('text') or kwargs.get('data')
             if pkt is not None:
                 handle_message(pkt)
         pub.subscribe(_on_any_data, "meshtastic.receive.data")
@@ -368,22 +368,7 @@ def start_server(radio):
     except Exception as e:
         print(f"[WARN] Could not subscribe to meshtastic.receive.data: {e}")
 
-    # FINAL SAFETY NET: log ANY pubsub traffic so we can see what's actually emitted
-    try:
-        def _on_all_topics(topic=pub.AUTO_TOPIC, **kwargs):
-            try:
-                tname = topic.getName() if hasattr(topic, 'getName') else str(topic)
-            except Exception:
-                tname = str(topic)
-            print(f"[DEBUG] pubsub ALL_TOPICS: {tname} kwargs={list(kwargs.keys())}")
-            # If a 'packet' is present, try to handle it
-            pkt = kwargs.get('packet') or kwargs.get('text') or kwargs.get('data')
-            if pkt is not None:
-                handle_message(pkt)
-        pub.subscribe(_on_all_topics, pub.ALL_TOPICS)
-        print("[INFO] Subscribed to pub.ALL_TOPICS (debug)")
-    except Exception as e:
-        print(f"[WARN] Could not subscribe to pub.ALL_TOPICS: {e}")
+    # (ALL_TOPICS debug subscription removed)
 
 
 # Only run the server if this script is executed directly
