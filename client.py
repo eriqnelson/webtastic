@@ -1,8 +1,37 @@
 import json
-from listener import start_listener
 import os
+from pubsub import pub
 
 received_fragments = {}
+
+# Normalize incoming packets/messages to a JSON dict we expect
+def _coerce_to_dict(msg):
+    try:
+        if isinstance(msg, dict) and ("type" in msg or "path" in msg):
+            return True, msg, None
+        if isinstance(msg, dict):
+            d = msg.get("decoded") if isinstance(msg.get("decoded"), dict) else None
+            txt = None
+            if d and isinstance(d.get("text"), str):
+                txt = d["text"]
+            elif isinstance(msg.get("text"), str):
+                txt = msg["text"]
+            if txt:
+                import json as _json
+                try:
+                    payload = _json.loads(txt)
+                    if isinstance(payload, dict):
+                        return True, payload, None
+                except Exception:
+                    return False, None, "decoded.text not JSON"
+        if isinstance(msg, str):
+            import json as _json
+            payload = _json.loads(msg)
+            if isinstance(payload, dict):
+                return True, payload, None
+        return False, None, "unrecognized message shape"
+    except Exception as e:
+        return False, None, f"exception while coercing: {e}"
 
 # Helpers to work with either RadioInterface or a raw Meshtastic iface
 def _iface_of(r):
@@ -15,19 +44,20 @@ def _default_channel_index():
         return 1
 
 def _send_text(r, text):
-    # Prefer RadioInterface.send() which uses resolved default_channel_index
-    if hasattr(r, "send"):
-        r.send(text)
-        return
-    # Fallback to raw iface; include a channelIndex
     try:
         ch = getattr(r, "default_channel_index", None)
         if ch is None:
             ch = _default_channel_index()
-        r.sendText(text, channelIndex=ch)
     except Exception:
-        # Last-ditch: send without explicit channel index
-        r.sendText(text)
+        ch = _default_channel_index()
+    try:
+        iface = _iface_of(r)
+        print(f"[DEBUG] Client TX channelIndex={ch} payload={text}")
+        iface.sendText(text, channelIndex=int(ch))
+    except Exception as e:
+        print(f"[WARN] Client sendText failed on channel {ch}: {e}; falling back to RadioInterface.send()")
+        if hasattr(r, "send"):
+            r.send(text)
 
 def send_get_request(radio, path, frag=None):
     """
@@ -78,7 +108,32 @@ def start_client(radio, path, timeout=5):
             print(f"Saved to downloads/{filename}")
             complete.set()
 
-    start_listener(_iface_of(radio), handle_response)
+    iface = _iface_of(radio)
+
+    def _handle_raw(raw):
+        print(f"[DEBUG] Client RX raw: {raw}")
+        ok, payload, reason = _coerce_to_dict(raw)
+        if not ok:
+            print(f"[WARN] Client ignoring message: {reason}")
+            return
+        handle_response(payload)
+
+    # Attach direct interface callback
+    try:
+        def _iface_on_receive(packet, interface):
+            print(f"[IFACE] {packet}")
+            _handle_raw(packet)
+        iface.onReceive = _iface_on_receive
+        print("[INFO] Client attached iface.onReceive callback")
+    except Exception as e:
+        print(f"[WARN] Client could not attach iface.onReceive: {e}")
+
+    # Subscribe to pubsub as well
+    try:
+        pub.subscribe(lambda packet=None, interface=None, **kw: _handle_raw(packet), "meshtastic.receive")
+        print("[INFO] Client subscribed to meshtastic.receive")
+    except Exception as e:
+        print(f"[WARN] Client pubsub subscribe failed: {e}")
 
     # Initial request
     send_get_request(radio, path)
@@ -105,6 +160,13 @@ if __name__ == "__main__":
     from radio import RadioInterface, DEFAULT_CHANNEL_INDEX
     import time, os
     radio = RadioInterface()
+    iface = getattr(radio, 'iface', radio)
+    try:
+        tname = type(iface).__name__
+        dev = getattr(iface, 'devPath', None) or getattr(iface, 'port', None)
+        print(f"[INFO] Client interface: {tname} dev={dev}")
+    except Exception:
+        pass
     print(f"[INFO] Default channel index (env): {os.getenv('DEFAULT_CHANNEL_INDEX', '1')}")
     path = input("Enter the file path to request (e.g. /test.html): ")
     print("Waiting for response... (Ctrl+C to exit)")
