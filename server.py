@@ -150,18 +150,10 @@ def start_server(radio):
         print(f"[DEBUG] pubsub receive packet: {packet}")
         handle_message(packet)
 
-    def _on_conn_established(**kwargs):
-        print("[INFO] Meshtastic connection established")
-
-    def _on_conn_lost(**kwargs):
-        print("[WARN] Meshtastic connection lost")
-
-    # Subscribe to the structured packet stream and connection lifecycle events
+    # Subscribe to the structured packet stream
     pub.subscribe(_on_any, "meshtastic.receive")
-    pub.subscribe(_on_conn_established, "meshtastic.connection.established")
-    pub.subscribe(_on_conn_lost, "meshtastic.connection.lost")
 
-    print("[INFO] Subscribed to meshtastic.receive and connection topics")
+    print("[INFO] Subscribed to meshtastic.receive")
 
 
 
