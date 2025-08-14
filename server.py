@@ -53,19 +53,27 @@ def _default_channel_index():
         return 1
 
 def _send_text(r, text):
-    # Prefer RadioInterface.send() which uses resolved default_channel_index
-    if hasattr(r, "send"):
-        r.send(text)
-        return
-    # Fallback to raw iface; include a channelIndex if we can
+    """Always send with an explicit channel index so we don't rely on wrapper defaults."""
     try:
         ch = getattr(r, "default_channel_index", None)
         if ch is None:
             ch = _default_channel_index()
-        r.sendText(text, channelIndex=ch)
     except Exception:
-        # Last-ditch: send without explicit channel index
-        r.sendText(text)
+        ch = _default_channel_index()
+    try:
+        # Prefer the raw iface if available
+        iface = _iface_of(r)
+        print(f"[DEBUG] TX channelIndex={ch} payload={text}")
+        iface.sendText(text, channelIndex=int(ch))
+    except Exception as e:
+        print(f"[ERROR] sendText failed on channel {ch}: {e}")
+        # Last resort: try wrapper .send (may choose its own index)
+        if hasattr(r, "send"):
+            try:
+                print("[WARN] Falling back to RadioInterface.send() without explicit channelIndex")
+                r.send(text)
+            except Exception as e2:
+                print(f"[ERROR] Fallback RadioInterface.send failed: {e2}")
 
 def create_response_envelopes(path, fragments):
     """
