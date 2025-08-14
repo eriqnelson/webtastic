@@ -43,6 +43,49 @@ def main():
     radio = RadioInterface()
     iface = getattr(radio, "iface", radio)
 
+    # Wait briefly for localNode to initialize
+    node = None
+    for _ in range(20):  # up to ~10s total
+        try:
+            node = getattr(iface, 'localNode', None)
+            if node and getattr(node, 'myInfo', None):
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+    if not node:
+        print("[WARN] localNode not ready after wait; continuing anyway")
+
+    # Read-only dump of node and channels for visibility
+    try:
+        if node:
+            try:
+                my = getattr(node, 'myInfo', None)
+                node_id = getattr(my, 'my_node_num', None) or getattr(my, 'my_node_id', None)
+                print(f"[INFO] Node: {node_id}")
+            except Exception:
+                print("[INFO] Node: (no myInfo)")
+            any_found = False
+            for i in range(8):
+                try:
+                    ch = node.getChannelByChannelIndex(i)
+                except Exception:
+                    ch = None
+                if not ch:
+                    continue
+                s = getattr(ch, 'settings', ch)
+                name = getattr(s, 'name', '') or getattr(ch, 'name', '')
+                psk = getattr(s, 'psk', '') or getattr(ch, 'psk', '')
+                is_primary = getattr(ch, 'isPrimary', False) or getattr(s, 'isPrimary', False)
+                any_found = True
+                print(f"[INFO] Channel[{i}] name='{name}' primary={is_primary} psk_len={len(psk)}")
+            if not any_found:
+                print("[WARN] No channels reported by API (0..7)")
+        else:
+            print("[WARN] No localNode available from interface (cannot dump channels)")
+    except Exception as e:
+        print(f"[WARN] Could not dump channels: {e}")
+
     # Show which port we actually opened
     try:
         tname = type(iface).__name__
@@ -88,4 +131,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()-
