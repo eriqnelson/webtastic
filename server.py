@@ -269,6 +269,25 @@ def start_server(radio):
 
     print("[INFO] Subscribed to meshtastic.receive")
 
+    # Some versions emit more specific subtopics; subscribe tolerantly
+    try:
+        def _on_any_text(packet=None, interface=None, **kwargs):
+            print(f"[DEBUG] pubsub receive .text packet: {packet}")
+            handle_message(packet)
+        pub.subscribe(_on_any_text, "meshtastic.receive.text")
+        print("[INFO] Also subscribed to meshtastic.receive.text")
+    except Exception as e:
+        print(f"[WARN] Could not subscribe to meshtastic.receive.text: {e}")
+
+    try:
+        def _on_any_data(packet=None, interface=None, **kwargs):
+            print(f"[DEBUG] pubsub receive .data packet: {packet}")
+            handle_message(packet)
+        pub.subscribe(_on_any_data, "meshtastic.receive.data")
+        print("[INFO] Also subscribed to meshtastic.receive.data")
+    except Exception as e:
+        print(f"[WARN] Could not subscribe to meshtastic.receive.data: {e}")
+
 
 # Only run the server if this script is executed directly
 if __name__ == "__main__":
