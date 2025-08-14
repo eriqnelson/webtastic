@@ -1,114 +1,90 @@
 #!/usr/bin/env python3
 """
-sniff.py — Meshtastic RX sniffer (API-only, serial-only)
+read_messages.py — Minimal, single-open Meshtastic reader (API-only, serial-only)
+
+Key improvements vs the GitHub snippet you found:
+  * Opens the serial interface ONCE (avoids port lock errors)
+  * Subscribes to meshtastic.receive and also hooks iface.onReceive
+  * Works with env-based port selection (supports wildcards)
+  * Robust TEXT_MESSAGE_APP parsing (decoded.text or payload bytes)
+  * Optionally prints a compact node list for name lookup
 
 Usage:
-  MESHTASTIC_PORT=/dev/ttyACM2 python sniff.py
-  # or use a glob so it survives reboots:
-  MESHTASTIC_PORT="/dev/ttyACM*" python sniff.py
-
-Prints every inbound packet via both iface.onReceive and the
-' meshtastic.receive ' pubsub topic. Also tries to pretty-print
-any JSON carried in decoded.text.
+  MESHTASTIC_PORT=/dev/ttyACM0 python read_messages.py
+  # or
+  MESHTASTIC_PORT="/dev/ttyACM*" python read_messages.py
 """
-
 import json
 import os
+import sys
 import time
 from pubsub import pub
 
-from radio import RadioInterface
+from radio import RadioInterface  # uses our resilient port resolution & wiring helpers
 
 
-def _extract_json(payload):
-    """Return (ok, dict_or_None, reason) after attempting to parse JSON from a packet."""
-    try:
-        if isinstance(payload, dict):
-            d = payload.get("decoded") if isinstance(payload.get("decoded"), dict) else None
-            txt = None
-            if d and isinstance(d.get("text"), str):
-                txt = d["text"]
-            elif isinstance(payload.get("text"), str):
-                txt = payload["text"]
-            if txt:
-                return True, json.loads(txt), None
-        elif isinstance(payload, str):
-            return True, json.loads(payload), None
-        return False, None, "no JSON found"
-    except Exception as e:
-        return False, None, f"json parse error: {e}"
+def _payload_text(decoded: dict) -> str | None:
+    """Extract UTF-8 text from a decoded dict that may have 'text' or byte 'payload'."""
+    if not isinstance(decoded, dict):
+        return None
+    # Preferred: decoded.text (Meshtastic sets this for TEXT_MESSAGE_APP)
+    txt = decoded.get("text")
+    if isinstance(txt, str):
+        return txt
+    # Fallback: decoded.payload (bytes) → utf-8
+    raw = decoded.get("payload")
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            return raw.decode("utf-8", errors="replace")
+        except Exception:
+            return None
+    return None
 
 
 def main():
     radio = RadioInterface()
     iface = getattr(radio, "iface", radio)
 
-    # Wait briefly for localNode to initialize
-    node = None
-    for _ in range(20):  # up to ~10s total
-        try:
-            node = getattr(iface, 'localNode', None)
-            if node and getattr(node, 'myInfo', None):
-                break
-        except Exception:
-            pass
-        time.sleep(0.5)
-    if not node:
-        print("[WARN] localNode not ready after wait; continuing anyway")
+    # Diagnostics
+    dev = getattr(iface, 'devPath', None) or getattr(iface, 'port', None)
+    print(f"[INFO] Using serial port: {dev}")
 
-    # Read-only dump of node and channels for visibility
+    # Optionally print a compact node list for name lookup
+    shortnames = {}
     try:
-        if node:
-            try:
-                my = getattr(node, 'myInfo', None)
-                node_id = getattr(my, 'my_node_num', None) or getattr(my, 'my_node_id', None)
-                print(f"[INFO] Node: {node_id}")
-            except Exception:
-                print("[INFO] Node: (no myInfo)")
-            any_found = False
-            for i in range(8):
-                try:
-                    ch = node.getChannelByChannelIndex(i)
-                except Exception:
-                    ch = None
-                if not ch:
-                    continue
-                s = getattr(ch, 'settings', ch)
-                name = getattr(s, 'name', '') or getattr(ch, 'name', '')
-                psk = getattr(s, 'psk', '') or getattr(ch, 'psk', '')
-                is_primary = getattr(ch, 'isPrimary', False) or getattr(s, 'isPrimary', False)
-                any_found = True
-                print(f"[INFO] Channel[{i}] name='{name}' primary={is_primary} psk_len={len(psk)}")
-            if not any_found:
-                print("[WARN] No channels reported by API (0..7)")
-        else:
-            print("[WARN] No localNode available from interface (cannot dump channels)")
+        nodes = getattr(iface, 'nodes', {}) or {}
+        for node_num, info in nodes.items():
+            user = (info or {}).get('user', {}) or {}
+            sn = user.get('shortName') or user.get('longName') or 'Unknown'
+            shortnames[str(node_num)] = sn
+        if shortnames:
+            print("[INFO] Known nodes:")
+            for k, v in shortnames.items():
+                print(f"  {k}: {v}")
     except Exception as e:
-        print(f"[WARN] Could not dump channels: {e}")
+        print(f"[WARN] Could not read nodes: {e}")
 
-    # Show which port we actually opened
-    try:
-        tname = type(iface).__name__
-        dev = getattr(iface, 'devPath', None) or getattr(iface, 'port', None)
-        print(f"[INFO] Sniffer interface: {tname} dev={dev}")
-    except Exception:
-        pass
-
-    # Unified handler
-    def handle(raw):
-        print(f"[RAW ] {raw}")
-        ok, js, reason = _extract_json(raw)
-        if ok and isinstance(js, dict):
-            print(f"[JSON] {js}")
-        else:
-            # keep it quiet unless you need it
-            pass
+    def handle_packet(packet):
+        # Unified receive path
+        try:
+            dec = packet.get('decoded') if isinstance(packet, dict) else None
+            portnum = dec.get('portnum') if isinstance(dec, dict) else None
+            if portnum == 'TEXT_MESSAGE_APP':
+                msg = _payload_text(dec)
+                from_id = packet.get('fromId') or packet.get('from')
+                short = shortnames.get(str(from_id), 'Unknown')
+                print(f"{short} ({from_id}): {msg}")
+            else:
+                # Uncomment if you want to see everything
+                # print(f"[OTHER] {packet}")
+                pass
+        except Exception as e:
+            print(f"[WARN] Parse error: {e} | packet={packet}")
 
     # Attach direct interface callback
     try:
         def _iface_on_receive(packet, interface):
-            print(f"[IFACE] {packet}")
-            handle(packet)
+            handle_packet(packet)
         iface.onReceive = _iface_on_receive
         print("[INFO] Attached iface.onReceive callback")
     except Exception as e:
@@ -116,18 +92,22 @@ def main():
 
     # Subscribe to pubsub as well
     try:
-        pub.subscribe(lambda packet=None, interface=None, **kw: (print(f"[PUBSB] {packet}"), handle(packet)), "meshtastic.receive")
+        pub.subscribe(lambda packet=None, interface=None, **kw: handle_packet(packet), "meshtastic.receive")
         print("[INFO] Subscribed to meshtastic.receive")
     except Exception as e:
         print(f"[WARN] PubSub subscribe failed: {e}")
 
-    print(f"[INFO] MESHTASTIC_PORT={os.getenv('MESHTASTIC_PORT')} | DEFAULT_CHANNEL_INDEX={os.getenv('DEFAULT_CHANNEL_INDEX','1')}")
-    print("[INFO] Sniffing... Ctrl+C to stop")
+    print("[INFO] Listening… Ctrl+C to stop")
     try:
         while True:
+            sys.stdout.flush()
             time.sleep(1)
     except KeyboardInterrupt:
-        print("[INFO] Stopped")
+        print("[INFO] Exiting…")
+        try:
+            iface.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
