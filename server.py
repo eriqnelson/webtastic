@@ -96,11 +96,11 @@ def start_server(radio):
 # Only run the server if this script is executed directly
 if __name__ == "__main__":
     try:
-        from radio import RadioInterface, configure_channel, DEFAULT_CHANNEL_INDEX
+        from radio import RadioInterface
         import time
-        # Configure the channel first (API / URL if provided), then open a single interface
-        radio = configure_channel(index=DEFAULT_CHANNEL_INDEX)
-        print(f"[INFO] Using channel index: {getattr(radio, 'default_channel_index', 'unknown')}")
+        # Open a single interface (no provisioning; provisioning handled elsewhere)
+        radio = RadioInterface()
+        print(f"[INFO] Default channel index (env): {os.getenv('DEFAULT_CHANNEL_INDEX', '1')}")
         print("Starting MiniHTTP server...")
         start_server(radio)
         while True:

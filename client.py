@@ -102,11 +102,10 @@ def start_client(radio, path, timeout=5):
 
 
 if __name__ == "__main__":
-    from radio import RadioInterface, configure_channel, DEFAULT_CHANNEL_INDEX
+    from radio import RadioInterface, DEFAULT_CHANNEL_INDEX
     import time, os
-    # Configure the channel first (API / URL if provided), then open a single interface
-    radio = configure_channel(index=DEFAULT_CHANNEL_INDEX)
-    print(f"[INFO] Using channel index: {getattr(radio, 'default_channel_index', 'unknown')}")
+    radio = RadioInterface()
+    print(f"[INFO] Default channel index (env): {os.getenv('DEFAULT_CHANNEL_INDEX', '1')}")
     path = input("Enter the file path to request (e.g. /test.html): ")
     send_get_request(radio, path)
     print("Waiting for response... (Ctrl+C to exit)")
