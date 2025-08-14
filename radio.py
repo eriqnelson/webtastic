@@ -2,6 +2,7 @@ from dotenv import load_dotenv; load_dotenv()
 import os
 # Use the correct Meshtastic interface classes for each transport
 from meshtastic.serial_interface import SerialInterface
+from meshtastic.protobuf import config_pb2
 from pubsub import pub
 import time
 from typing import Optional
@@ -41,15 +42,29 @@ def _api_set_url(node, url: str) -> bool:
     return False
 
 def apply_url_config(url: str):
-    """Apply a Complete URL via Meshtastic API (no CLI)."""
-    tmp_iface = get_radio_interface()
+    """Apply a Complete URL via Meshtastic API (no CLI).
+    If the device already matches this URL (includeAll=True), skip re-applying to avoid unnecessary reboots.
+    """
+    tmp_iface = None
     try:
+        tmp_iface = get_radio_interface()
         node = _api_get_node(tmp_iface)
         if not node:
             return
+        try:
+            current = node.getURL(includeAll=True)
+        except Exception:
+            current = None
+        if current and current.strip() == url.strip():
+            # Already provisioned with this URL; do nothing
+            return
         _api_set_url(node, url)
     finally:
-        tmp_iface.close()
+        try:    
+            if tmp_iface is not None and hasattr(tmp_iface, "close"):
+                tmp_iface.close()
+        except Exception:
+            pass
 
 def _api_find_channel_index_by_name(node, name: str, max_channels: int = 8) -> Optional[int]:
     """Scan channel indices via API and return the index whose name matches."""
@@ -61,6 +76,39 @@ def _api_find_channel_index_by_name(node, name: str, max_channels: int = 8) -> O
         if ch_name == name:
             return i
     return None
+
+def ensure_lora_settings(node) -> None:
+    """Optionally enforce LoRa region/modem preset from env via API, then write if changed.
+    Env vars: MESHTASTIC_LORA_REGION (e.g., US, EU_433, EU_868), MESHTASTIC_LORA_MODEM_PRESET (e.g., LONG_FAST, MEDIUM_FAST).
+    """
+    try:
+        changed = False
+        desired_region = os.getenv("MESHTASTIC_LORA_REGION")
+        desired_preset = os.getenv("MESHTASTIC_LORA_MODEM_PRESET")
+        lora = node.localConfig.lora if node and node.localConfig else None
+        if not lora:
+            return
+        if desired_region:
+            try:
+                val = config_pb2.Config.LoRaConfig.Region.Value(desired_region)
+                if lora.region != val:
+                    lora.region = val
+                    changed = True
+            except Exception:
+                print(f"[WARN] Unknown MESHTASTIC_LORA_REGION '{desired_region}' — ignoring")
+        if desired_preset:
+            try:
+                val = config_pb2.Config.LoRaConfig.ModemPreset.Value(desired_preset)
+                if lora.modem_preset != val:
+                    lora.modem_preset = val
+                    changed = True
+            except Exception:
+                print(f"[WARN] Unknown MESHTASTIC_LORA_MODEM_PRESET '{desired_preset}' — ignoring")
+        if changed:
+            node.writeConfig("lora")
+    except Exception:
+        # Non-fatal; leave settings as-is
+        pass
 
 DEFAULT_CHANNEL_INDEX = int(os.getenv("DEFAULT_CHANNEL_INDEX", 1))
 
@@ -180,6 +228,8 @@ def configure_channel(index=DEFAULT_CHANNEL_INDEX):
     try:
         node = _api_get_node(radio.iface)
         if node:
+            # Optionally enforce region/preset from env so it doesn’t drift
+            ensure_lora_settings(node)
             resolved = _api_find_channel_index_by_name(node, name)
             radio.default_channel_index = resolved if resolved is not None else index
         else:

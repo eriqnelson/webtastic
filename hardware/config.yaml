@@ -1,0 +1,52 @@
+                                                                               # start of Meshtastic configure yaml
+channel_url: https://meshtastic.org/e/#CgcSAQE6AggNCi0SII4qS3xdHj9qmwwtTm-KGzxdfp8KK0xtjg8aO1x9nh8qGgl3ZWJ0YXN0aWMSCggBQANIAVAeaAE
+config:
+  bluetooth:
+    enabled: true
+    fixedPin: 123456
+  device:
+    nodeInfoBroadcastSecs: 10800
+    tzdef: PST8PDT,M3.2.0/2:00:00,M11.1.0/2:00:00
+  display:
+    screenOnSecs: 600
+  lora:
+    hopLimit: 3
+    sx126xRxBoostedGain: true
+    txEnabled: true
+    txPower: 30
+    usePreset: true
+  mqtt:
+    encryptionEnabled: false
+  network:
+    ntpServer: meshtastic.pool.ntp.org
+  position:
+    broadcastSmartMinimumDistance: 100
+    broadcastSmartMinimumIntervalSecs: 30
+    gpsMode: ENABLED
+    gpsUpdateInterval: 120
+    positionBroadcastSecs: 900
+    positionBroadcastSmartEnabled: true
+    positionFlags: 811
+  power:
+    lsSecs: 300
+    minWakeSecs: 10
+    sdsSecs: 4294967295
+    waitBluetoothSecs: 60
+  security:
+    privateKey: base64:aGDCnPIgUAZIeXi5aB6CI/MNz5W8lfj+dXKdxO1uMWM=
+    publicKey: base64:mYi9cIQ2SWa5VjKZf9zn6xxtODgoyge74/cSfQQSWVo=
+    serialEnabled: true
+module_config:
+  ambientLighting:
+    blue: 244
+    current: 10
+    green: 36
+    red: 203
+  detectionSensor:
+    detectionTriggerType: LOGIC_HIGH
+    minimumBroadcastSecs: 45
+  mqtt:
+    address: mqtt.meshtastic.org
+    encryptionEnabled: true
+    password: large4cats
+    root: msh/US
