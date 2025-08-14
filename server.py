@@ -182,16 +182,28 @@ def start_server(radio):
     except Exception:
         pass
 
+    # Wait briefly for localNode to initialize (avoids Node: None on slow boots)
+    node = None
+    for _ in range(20):  # up to ~10s total
+        try:
+            node = _api_get_node(iface)
+            if node and getattr(node, 'myInfo', None):
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+    if not node:
+        print("[WARN] localNode not ready after wait; continuing anyway")
+
     # Read-only dump of node and channels for visibility
     try:
-        node = _api_get_node(iface)
         if node:
             try:
                 my = getattr(node, 'myInfo', None)
                 node_id = getattr(my, 'my_node_num', None) or getattr(my, 'my_node_id', None)
                 print(f"[INFO] Node: {node_id}")
             except Exception:
-                pass
+                print("[INFO] Node: (no myInfo)")
             any_found = False
             for i in range(8):
                 d = _channel_info_dict(_api_get_channel(node, i), i)
@@ -253,27 +265,6 @@ def start_server(radio):
         print(f"[DEBUG] pubsub receive packet: {packet}")
         handle_message(packet)
 
-    # Also listen for connection events (be tolerant of topic arg specs)
-    def _on_connection_established(**kwargs):
-        print("[INFO] PubSub: connection established")
-        try:
-            # small hello to confirm TX path on connect
-            hello = json.dumps({"type": "RESP", "path": "/health", "frag": 1, "of_frag": 1, "data": "server_online"})
-            _send_text(radio, hello)
-        except Exception as e:
-            print(f"[WARN] hello-on-connect failed: {e}")
-
-    def _on_connection_lost(**kwargs):
-        print("[WARN] PubSub: connection lost")
-
-    try:
-        pub.subscribe(_on_connection_established, "meshtastic.connection.established")
-        pub.subscribe(_on_connection_lost, "meshtastic.connection.lost")
-        print("[INFO] Subscribed to connection events")
-    except Exception as e:
-        print(f"[WARN] Could not subscribe to connection events: {e}")
-
-    # Subscribe to the structured packet stream
     pub.subscribe(_on_any, "meshtastic.receive")
 
     print("[INFO] Subscribed to meshtastic.receive")
