@@ -182,6 +182,111 @@ def start_server(radio):
     except Exception:
         pass
 
+    # --- Attach RX handlers ASAP (before node wait/dumps) ---
+    def handle_message(raw):
+        try:
+            # Log raw packet
+            print(f"[DEBUG] RX(raw): {raw}")
+
+            # Skip self-originated packets to avoid loops
+            from_id = raw.get('fromId') if isinstance(raw, dict) else None
+            from_id = from_id or (raw.get('from') if isinstance(raw, dict) else None)
+            if my_id and (str(from_id) == str(my_id)):
+                print("[INFO] Skipping self-originated packet")
+                return
+
+            # Extract decoded content
+            dec = raw.get('decoded') if isinstance(raw, dict) else None
+            portnum = dec.get('portnum') if isinstance(dec, dict) else None
+            text = dec.get('text') if isinstance(dec, dict) else None
+
+            # Only react to text app traffic for MiniHTTP
+            if portnum != 'TEXT_MESSAGE_APP':
+                return
+
+            # Try to parse JSON request
+            req = None
+            if isinstance(text, str):
+                try:
+                    req = json.loads(text)
+                except Exception:
+                    req = None
+
+            # If not JSON, echo back a simple envelope so we can confirm RX path
+            if not isinstance(req, dict):
+                resp = {"type": "RESP", "path": "/echo", "frag": 1, "of_frag": 1, "data": text or f"port={portnum}"}
+                payload = json.dumps(resp)
+                print(f"[ECHO] {payload}")
+                _send_text(radio, payload)
+                return
+
+            # If JSON but not a GET, echo back the message
+            if req.get('type') != 'GET':
+                resp = {"type": "RESP", "path": "/echo", "frag": 1, "of_frag": 1, "data": text}
+                payload = json.dumps(resp)
+                print(f"[ECHO] {payload}")
+                _send_text(radio, payload)
+                return
+
+            # Valid MiniHTTP GET
+            path = req.get('path') or '/'
+            frag = req.get('frag')
+            print(f"[INFO] GET for path: {path} frag={frag}")
+
+            try:
+                fragments = fragment_html_file(f"html{path}")
+            except FileNotFoundError:
+                err = json.dumps({"type": "RESP", "path": path, "frag": 1, "of_frag": 1, "data": f"404: {path} not found"})
+                print(f"[WARN] File not found: {path}")
+                _send_text(radio, err)
+                return
+
+            if frag is not None:
+                try:
+                    frag_i = int(frag)
+                except Exception:
+                    frag_i = -1
+                total = len(fragments)
+                if 1 <= frag_i <= total:
+                    envelopes = create_response_envelopes(path, fragments)
+                    one = json.dumps(envelopes[frag_i - 1])
+                    print(f"[INFO] Serving single fragment {frag_i}/{total} for {path}")
+                    _send_text(radio, one)
+                    return
+                else:
+                    print(f"[WARN] Requested fragment {frag} out of range for {path}")
+                    return
+
+            envelopes = create_response_envelopes(path, fragments)
+            print(f"[INFO] Sending {len(envelopes)} fragment(s) for {path}")
+            for env in envelopes:
+                payload = json.dumps(env)
+                print(f"[DEBUG] TX: {payload}")
+                _send_text(radio, payload)
+        except Exception:
+            print("[ERROR] Exception while handling message:\n" + traceback.format_exc())
+
+    try:
+        def _iface_on_receive(packet, interface):
+            print("[IFACE]")
+            print(f"[DEBUG] iface.onReceive packet: {packet}")
+            handle_message(packet)
+        iface.onReceive = _iface_on_receive
+        print("[INFO] Attached iface.onReceive callback (early)")
+    except Exception as e:
+        print(f"[WARN] Could not attach iface.onReceive: {e}")
+
+    try:
+        def _on_pub(packet=None, interface=None, **kw):
+            print("[PUBSB]")
+            pkt = packet or kw.get('packet') or kw.get('text') or kw.get('data')
+            if pkt is not None:
+                handle_message(pkt)
+        pub.subscribe(_on_pub, "meshtastic.receive")
+        print("[INFO] Subscribed to meshtastic.receive (early)")
+    except Exception as e:
+        print(f"[WARN] PubSub subscribe failed: {e}")
+
     # Wait briefly for localNode to initialize (avoids Node: None on slow boots)
     node = None
     for _ in range(20):  # up to ~10s total
@@ -242,114 +347,6 @@ def start_server(radio):
         th = threading.Thread(target=_beacon_loop, daemon=True)
         th.start()
         print("[INFO] Debug beacon enabled (SERVER_DEBUG_BEACON=1)")
-
-    # Attach direct interface callback (works even if pubsub topics vary by version)
-    try:
-        def handle_message(raw):
-            try:
-                # Log raw packet
-                print(f"[DEBUG] RX(raw): {raw}")
-
-                # Skip self-originated packets to avoid loops
-                from_id = raw.get('fromId') if isinstance(raw, dict) else None
-                from_id = from_id or (raw.get('from') if isinstance(raw, dict) else None)
-                if my_id and (str(from_id) == str(my_id)):
-                    print("[INFO] Skipping self-originated packet")
-                    return
-
-                # Extract decoded content
-                dec = raw.get('decoded') if isinstance(raw, dict) else None
-                portnum = dec.get('portnum') if isinstance(dec, dict) else None
-                text = dec.get('text') if isinstance(dec, dict) else None
-
-                # Only react to text app traffic for MiniHTTP
-                if portnum != 'TEXT_MESSAGE_APP':
-                    return
-
-                # Try to parse JSON request
-                req = None
-                if isinstance(text, str):
-                    try:
-                        req = json.loads(text)
-                    except Exception:
-                        req = None
-
-                # If not JSON, echo back a simple envelope so we can confirm RX path
-                if not isinstance(req, dict):
-                    resp = {"type": "RESP", "path": "/echo", "frag": 1, "of_frag": 1, "data": text or f"port={portnum}"}
-                    payload = json.dumps(resp)
-                    print(f"[ECHO] {payload}")
-                    _send_text(radio, payload)
-                    return
-
-                # If JSON but not a GET, echo back the message
-                if req.get('type') != 'GET':
-                    resp = {"type": "RESP", "path": "/echo", "frag": 1, "of_frag": 1, "data": text}
-                    payload = json.dumps(resp)
-                    print(f"[ECHO] {payload}")
-                    _send_text(radio, payload)
-                    return
-
-                # Valid MiniHTTP GET
-                path = req.get('path') or '/'
-                frag = req.get('frag')
-                print(f"[INFO] GET for path: {path} frag={frag}")
-
-                try:
-                    fragments = fragment_html_file(f"html{path}")
-                except FileNotFoundError:
-                    err = json.dumps({"type": "RESP", "path": path, "frag": 1, "of_frag": 1, "data": f"404: {path} not found"})
-                    print(f"[WARN] File not found: {path}")
-                    _send_text(radio, err)
-                    return
-
-                if frag is not None:
-                    try:
-                        frag_i = int(frag)
-                    except Exception:
-                        frag_i = -1
-                    total = len(fragments)
-                    if 1 <= frag_i <= total:
-                        envelopes = create_response_envelopes(path, fragments)
-                        one = json.dumps(envelopes[frag_i - 1])
-                        print(f"[INFO] Serving single fragment {frag_i}/{total} for {path}")
-                        _send_text(radio, one)
-                        return
-                    else:
-                        print(f"[WARN] Requested fragment {frag} out of range for {path}")
-                        return
-
-                envelopes = create_response_envelopes(path, fragments)
-                print(f"[INFO] Sending {len(envelopes)} fragment(s) for {path}")
-                for env in envelopes:
-                    payload = json.dumps(env)
-                    print(f"[DEBUG] TX: {payload}")
-                    _send_text(radio, payload)
-            except Exception:
-                print("[ERROR] Exception while handling message:\n" + traceback.format_exc())
-        def _iface_on_receive(packet, interface):
-            print(f"[DEBUG] iface.onReceive packet: {packet}")
-            handle_message(packet)
-        iface.onReceive = _iface_on_receive
-        print("[INFO] Attached iface.onReceive callback")
-    except Exception as e:
-        print(f"[WARN] Could not attach iface.onReceive: {e}")
-
-    # Minimal, known-good pubsub subscription (matches server2/sniffer)
-    try:
-        def _on_pub(packet=None, interface=None, **kw):
-            print("[PUBSB]")
-            if packet is not None:
-                handle_message(packet)
-            else:
-                # Some builds may pass under a different kw
-                alt = kw.get('packet') or kw.get('text') or kw.get('data')
-                if alt is not None:
-                    handle_message(alt)
-        pub.subscribe(_on_pub, "meshtastic.receive")
-        print("[INFO] Subscribed to meshtastic.receive")
-    except Exception as e:
-        print(f"[WARN] PubSub subscribe failed: {e}")
 
     print("[INFO] Server READY: listening for GETs…")
 
