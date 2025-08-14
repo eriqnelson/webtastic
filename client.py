@@ -242,7 +242,12 @@ if __name__ == "__main__":
     except Exception:
         pass
     print(f"[INFO] Default channel index (env): {os.getenv('DEFAULT_CHANNEL_INDEX', '1')}")
-    path = input("Enter the file path to request (e.g. /test.html): ")
+    raw_in = input("Enter the file path to request (e.g. /test.html): ")
+    # Normalize empty input to a sensible default
+    path = (raw_in or "").strip()
+    if not path:
+        path = os.getenv("CLIENT_DEFAULT_PATH", "/index.html")
+    print(f"[INFO] Requesting path: {path}")
     print("Waiting for response... (Ctrl+C to exit)")
     try:
         start_client(radio, path)
