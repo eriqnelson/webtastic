@@ -45,6 +45,11 @@ def _coerce_to_dict(msg):
 # Helpers to work with either RadioInterface or a raw Meshtastic iface
 import os
 
+TRUTHY = {"1", "true", "yes", "on", "y"}
+
+def _is_on(name: str) -> bool:
+    return (os.getenv(name) or "").strip().lower() in TRUTHY
+
 
 def _iface_of(r):
     return getattr(r, "iface", r)
@@ -174,6 +179,8 @@ def start_server(radio):
     """
     iface = _iface_of(radio)
 
+    echo_all = _is_on('SERVER_ECHO_ALL')
+
     # Mutable holder for our node id so early handlers can read it before discovery completes
     my_id_holder = {"id": None}
 
@@ -190,6 +197,9 @@ def start_server(radio):
         try:
             # Log raw packet
             print(f"[DEBUG] RX(raw): {raw}")
+            ch = raw.get('channel') if isinstance(raw, dict) else None
+            if ch is not None:
+                print(f"[DEBUG] RX channel={ch}")
 
             # Skip self-originated packets to avoid loops
             from_id = raw.get('fromId') if isinstance(raw, dict) else None
@@ -204,8 +214,20 @@ def start_server(radio):
             portnum = dec.get('portnum') if isinstance(dec, dict) else None
             text = dec.get('text') if isinstance(dec, dict) else None
 
-            # Only react to text app traffic for MiniHTTP
+            # Only react to text app traffic for MiniHTTP in normal mode
             if portnum != 'TEXT_MESSAGE_APP':
+                if echo_all:
+                    # Build a brief echo so we can see the server is alive on this channel
+                    preview = None
+                    if isinstance(dec, dict):
+                        txt = dec.get('text')
+                        if isinstance(txt, str):
+                            preview = txt
+                    preview = preview or f"port={portnum or 'UNKNOWN'} id={raw.get('id')}"
+                    resp = {"type": "RESP", "path": "/echo", "frag": 1, "of_frag": 1, "data": f"echo-any: {preview}"}
+                    payload = json.dumps(resp)
+                    print(f"[ECHO-ANY] {payload}")
+                    _send_text(radio, payload)
                 return
 
             # Try to parse JSON request
@@ -367,6 +389,8 @@ def start_server(radio):
         print("[INFO] Debug beacon enabled (SERVER_DEBUG_BEACON=1)")
 
     print("[INFO] Server READY: listening for GETs…")
+    if echo_all:
+        print("[INFO] SERVER_ECHO_ALL=1 (echoing any inbound packet for debugging)")
 
 
 # Only run the server if this script is executed directly
