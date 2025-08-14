@@ -103,6 +103,7 @@ def handle_get_message(message):
 
     if message.get("type") != "GET":
         return []
+    print(f"[INFO] GET for path: {message.get('path')} frag={message.get('frag')}")
 
     path = message.get("path")
     if not path:
@@ -110,11 +111,13 @@ def handle_get_message(message):
 
     try:
         fragments = fragment_html_file(f"html{path}")
+        print(f"[INFO] Fragmented {path} into {len(fragments)} parts")
         frag_num = message.get("frag")
         if frag_num is not None:
             # Return only the requested fragment (frag is 1-based)
             frag_num = int(frag_num)
             if 1 <= frag_num <= len(fragments):
+                print(f"[INFO] Serving single fragment {frag_num}/{len(fragments)} for {path}")
                 return [create_response_envelopes(path, fragments)[frag_num-1]]
             else:
                 print(f"Requested fragment {frag_num} out of range for {path}")
@@ -173,6 +176,7 @@ def start_server(radio):
             responses = handle_get_message(raw)
             if not responses:
                 return
+            print(f"[INFO] Sending {len(responses)} fragment(s) for this GET")
             for resp in responses:
                 payload = json.dumps(resp)
                 print(f"[DEBUG] TX: {payload}")
