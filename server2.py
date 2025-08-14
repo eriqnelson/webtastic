@@ -32,7 +32,7 @@ from pubsub import pub
 
 from radio import RadioInterface  # uses our resilient port resolution & wiring helpers
 
-from fragment import fragment_html_file, create_response_envelopes
+from fragment import fragment_html_file
 
 
 def _payload_text(decoded: dict) -> str | None:
@@ -162,9 +162,6 @@ def main():
                         return
 
                     total = len(frags)
-                    print(f"[INFO] GET {path} → {total} fragment(s)")
-
-                    envelopes = create_response_envelopes(path, frags)
 
                     # If a single fragment is requested
                     if frag is not None:
@@ -173,18 +170,32 @@ def main():
                         except Exception:
                             i = -1
                         if 1 <= i <= total:
-                            one = json.dumps(envelopes[i - 1])
+                            env = {
+                                "type": "RESP",
+                                "path": path,
+                                "frag": i,
+                                "of_frag": total,
+                                "data": frags[i - 1],
+                            }
+                            payload = json.dumps(env)
                             print(f"[TX  ] {path} frag {i}/{total}")
-                            _send_text(radio, iface, one)
+                            _send_text(radio, iface, payload)
                             return
                         else:
                             print(f"[WARN] Requested out-of-range frag {frag} for {path}")
                             return
 
                     # Otherwise send all fragments in order
-                    for env in envelopes:
+                    for idx, chunk in enumerate(frags, start=1):
+                        env = {
+                            "type": "RESP",
+                            "path": path,
+                            "frag": idx,
+                            "of_frag": total,
+                            "data": chunk,
+                        }
                         payload = json.dumps(env)
-                        print(f"[TX  ] {path} {env.get('frag')}/{env.get('of_frag')}")
+                        print(f"[TX  ] {path} {idx}/{total}")
                         _send_text(radio, iface, payload)
                     return
                 except Exception:
