@@ -335,40 +335,23 @@ def start_server(radio):
     except Exception as e:
         print(f"[WARN] Could not attach iface.onReceive: {e}")
 
-    # Direct pubsub subscriptions (some environments deliver messages only via pubsub)
-    # NOTE: The 'meshtastic.receive' root topic defines payload name 'packet';
-    # all subtopics must include 'packet' in their handler signature per pypubsub rules.
-    def _on_any(packet=None, interface=None, **kwargs):
-        print(f"[DEBUG] pubsub receive kwargs={list(kwargs.keys())}")
-        pkt = packet or kwargs.get('text') or kwargs.get('data')
-        if pkt is not None:
-            handle_message(pkt)
-    pub.subscribe(_on_any, "meshtastic.receive")
-    print("[INFO] Subscribed to meshtastic.receive")
-
+    # Minimal, known-good pubsub subscription (matches server2/sniffer)
     try:
-        def _on_any_text(packet=None, interface=None, **kwargs):
-            print(f"[DEBUG] pubsub receive .text kwargs={list(kwargs.keys())}")
-            pkt = packet or kwargs.get('text') or kwargs.get('data')
-            if pkt is not None:
-                handle_message(pkt)
-        pub.subscribe(_on_any_text, "meshtastic.receive.text")
-        print("[INFO] Also subscribed to meshtastic.receive.text")
+        def _on_pub(packet=None, interface=None, **kw):
+            print("[PUBSB]")
+            if packet is not None:
+                handle_message(packet)
+            else:
+                # Some builds may pass under a different kw
+                alt = kw.get('packet') or kw.get('text') or kw.get('data')
+                if alt is not None:
+                    handle_message(alt)
+        pub.subscribe(_on_pub, "meshtastic.receive")
+        print("[INFO] Subscribed to meshtastic.receive")
     except Exception as e:
-        print(f"[WARN] Could not subscribe to meshtastic.receive.text: {e}")
+        print(f"[WARN] PubSub subscribe failed: {e}")
 
-    try:
-        def _on_any_data(packet=None, interface=None, **kwargs):
-            print(f"[DEBUG] pubsub receive .data kwargs={list(kwargs.keys())}")
-            pkt = packet or kwargs.get('text') or kwargs.get('data')
-            if pkt is not None:
-                handle_message(pkt)
-        pub.subscribe(_on_any_data, "meshtastic.receive.data")
-        print("[INFO] Also subscribed to meshtastic.receive.data")
-    except Exception as e:
-        print(f"[WARN] Could not subscribe to meshtastic.receive.data: {e}")
-
-    # (ALL_TOPICS debug subscription removed)
+    print("[INFO] Server READY: listening for GETs…")
 
 
 # Only run the server if this script is executed directly
