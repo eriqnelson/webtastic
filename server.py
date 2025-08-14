@@ -338,27 +338,31 @@ def start_server(radio):
     # Direct pubsub subscriptions (some environments deliver messages only via pubsub)
     # NOTE: The 'meshtastic.receive' root topic defines payload name 'packet';
     # all subtopics must include 'packet' in their handler signature per pypubsub rules.
-    def _on_any(packet, interface):
-        print(f"[DEBUG] pubsub receive packet: {packet}")
-        handle_message(packet)
-
+    def _on_any(**kwargs):
+        pkt = kwargs.get('packet') or kwargs.get('text') or kwargs.get('data')
+        print(f"[DEBUG] pubsub receive kwargs={list(kwargs.keys())} packet={pkt}")
+        if pkt is not None:
+            handle_message(pkt)
     pub.subscribe(_on_any, "meshtastic.receive")
-
     print("[INFO] Subscribed to meshtastic.receive")
 
     try:
-        def _on_any_text(packet, interface):
-            print(f"[DEBUG] pubsub receive .text packet: {packet}")
-            handle_message(packet)
+        def _on_any_text(**kwargs):
+            pkt = kwargs.get('packet') or kwargs.get('text') or kwargs.get('data')
+            print(f"[DEBUG] pubsub receive .text kwargs={list(kwargs.keys())} packet={pkt}")
+            if pkt is not None:
+                handle_message(pkt)
         pub.subscribe(_on_any_text, "meshtastic.receive.text")
         print("[INFO] Also subscribed to meshtastic.receive.text")
     except Exception as e:
         print(f"[WARN] Could not subscribe to meshtastic.receive.text: {e}")
 
     try:
-        def _on_any_data(packet, interface):
-            print(f"[DEBUG] pubsub receive .data packet: {packet}")
-            handle_message(packet)
+        def _on_any_data(**kwargs):
+            pkt = kwargs.get('packet') or kwargs.get('text') or kwargs.get('data')
+            print(f"[DEBUG] pubsub receive .data kwargs={list(kwargs.keys())} packet={pkt}")
+            if pkt is not None:
+                handle_message(pkt)
         pub.subscribe(_on_any_data, "meshtastic.receive.data")
         print("[INFO] Also subscribed to meshtastic.receive.data")
     except Exception as e:
