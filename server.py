@@ -130,6 +130,16 @@ def start_server(radio):
     """
     iface = _iface_of(radio)
 
+    # Attach direct interface callback (works even if pubsub topics vary by version)
+    try:
+        def _iface_on_receive(packet, interface):
+            print(f"[DEBUG] iface.onReceive packet: {packet}")
+            handle_message(packet)
+        iface.onReceive = _iface_on_receive
+        print("[INFO] Attached iface.onReceive callback")
+    except Exception as e:
+        print(f"[WARN] Could not attach iface.onReceive: {e}")
+
     def handle_message(raw):
         try:
             print(f"[DEBUG] RX: {raw}")
