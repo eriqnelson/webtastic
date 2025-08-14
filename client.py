@@ -54,6 +54,15 @@ def _default_channel_index():
         return 1
 
 def _send_text(r, text):
+    # Prefer the RadioInterface .send() (lets library choose the right channel)
+    try:
+        if hasattr(r, "send"):
+            print(f"[DEBUG] Client TX (radio.send) payload={text}")
+            r.send(text)
+            return
+    except Exception as e:
+        print(f"[WARN] radio.send failed, will fall back to iface.sendText: {e}")
+    # Fallback to iface with explicit channel
     try:
         ch = getattr(r, "default_channel_index", None)
         if ch is None:
@@ -62,12 +71,10 @@ def _send_text(r, text):
         ch = _default_channel_index()
     try:
         iface = _iface_of(r)
-        print(f"[DEBUG] Client TX channelIndex={ch} payload={text}")
+        print(f"[DEBUG] Client TX (fallback) channelIndex={ch} payload={text}")
         iface.sendText(text, channelIndex=int(ch))
     except Exception as e:
-        print(f"[WARN] Client sendText failed on channel {ch}: {e}; falling back to RadioInterface.send()")
-        if hasattr(r, "send"):
-            r.send(text)
+        print(f"[ERROR] Client sendText failed on channel {ch}: {e}")
 
 def send_get_request(radio, path, frag=None):
     """
@@ -89,6 +96,7 @@ def start_client(radio, path, timeout=5):
     lock = threading.Lock()
     seen_ids = set()
     complete = threading.Event()
+    connected_evt = threading.Event()
     missing_fragments = set()
 
     def handle_response(message):
@@ -136,6 +144,20 @@ def start_client(radio, path, timeout=5):
 
     iface = _iface_of(radio)
 
+    # Diagnostics similar to server2
+    try:
+        dev = getattr(iface, 'devPath', None) or getattr(iface, 'port', None)
+        print(f"[INFO] Client iface dev={dev}")
+        nodes = getattr(iface, 'nodes', {}) or {}
+        if nodes:
+            print("[INFO] Client known nodes:")
+            for node_num, info in nodes.items():
+                user = (info or {}).get('user', {}) or {}
+                sn = user.get('shortName') or user.get('longName') or 'Unknown'
+                print(f"  {node_num}: {sn}")
+    except Exception as e:
+        print(f"[WARN] Client diagnostics failed: {e}")
+
     def _handle_raw(raw):
         print(f"[DEBUG] Client RX raw: {raw}")
         ok, payload, reason = _coerce_to_dict(raw)
@@ -164,11 +186,31 @@ def start_client(radio, path, timeout=5):
         print("[INFO] Client also subscribed to meshtastic.receive.text")
         pub.subscribe(lambda packet=None, interface=None, **kw: _handle_raw(packet), "meshtastic.receive.data")
         print("[INFO] Client also subscribed to meshtastic.receive.data")
+        # Wait for connection before first GET (mirrors server2 pattern)
+        def _on_conn(interface=None, **kw):
+            print("[INFO] Client connection established (pubsub)")
+            connected_evt.set()
+        pub.subscribe(_on_conn, "meshtastic.connection.established")
+        print("[INFO] Client subscribed to meshtastic.connection.established")
     except Exception as e:
         print(f"[WARN] Client pubsub subscribe failed: {e}")
 
-    # Initial request
-    send_get_request(radio, path)
+    # Initial request: wait briefly for connection
+    # If already connected, the event may never fire; send after short grace.
+    sent_initial = False
+    # Try quick path: if the interface exposes isConnected-like state, send immediately
+    try:
+        iface = _iface_of(radio)
+        is_up = getattr(iface, "connected", True)
+        if is_up:
+            send_get_request(radio, path)
+            sent_initial = True
+    except Exception:
+        pass
+    if not sent_initial:
+        print("[INFO] Waiting for connection before sending GET (up to 2s)…")
+        connected_evt.wait(timeout=2.0)
+        send_get_request(radio, path)
 
     # Wait for fragments, then check for missing
     start = time.time()
