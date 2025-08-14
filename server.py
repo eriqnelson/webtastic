@@ -145,27 +145,24 @@ def start_server(radio):
             print("[ERROR] Exception while handling message:\n" + traceback.format_exc())
 
     # Direct pubsub subscriptions (some environments deliver messages only via pubsub)
-    def _on_any(packet, interface=None):
-        print(f"[DEBUG] pubsub receive: {packet}")
+    # NOTE: The 'meshtastic.receive' root topic defines payload name 'packet';
+    # all subtopics must include 'packet' in their handler signature per pypubsub rules.
+    def _on_any(packet=None, interface=None, **kwargs):
+        print(f"[DEBUG] pubsub receive packet: {packet}")
         handle_message(packet)
 
-    def _on_text(text, interface=None):
-        print(f"[DEBUG] pubsub text: {text}")
-        handle_message(text)
-
-    def _on_conn_established(topic= None):
+    def _on_conn_established(**kwargs):
         print("[INFO] Meshtastic connection established")
 
-    def _on_conn_lost(topic= None):
+    def _on_conn_lost(**kwargs):
         print("[WARN] Meshtastic connection lost")
 
-    # Subscribe to both structured and text topics
+    # Subscribe to the structured packet stream and connection lifecycle events
     pub.subscribe(_on_any, "meshtastic.receive")
-    pub.subscribe(_on_text, "meshtastic.receive.text")
     pub.subscribe(_on_conn_established, "meshtastic.connection.established")
     pub.subscribe(_on_conn_lost, "meshtastic.connection.lost")
 
-    print("[INFO] Subscribed to meshtastic.receive and meshtastic.receive.text topics")
+    print("[INFO] Subscribed to meshtastic.receive and connection topics")
 
     # Keep the original listener for environments where it's required
     start_listener(iface, handle_message)
