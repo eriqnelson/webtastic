@@ -19,6 +19,7 @@ import os
 import sys
 import time
 import threading
+import traceback
 
 VERBOSE = True  # set False to quiet non-JSON traffic
 
@@ -131,50 +132,64 @@ def main():
                     print(f"[TEXT] {txt}")
 
             # If it's a proper MiniHTTP GET, serve fragments
-            if isinstance(req, dict) and req.get('type') == 'GET':
-                path = req.get('path') or '/'
-                frag = req.get('frag')
-                fs_path = f"html{path}"
+            is_get = isinstance(req, dict) and str(req.get('type', '')).upper() == 'GET'
+            print(f"[DEBUG] is_get={is_get} portnum={portnum}")
+            if is_get:
                 try:
-                    frags = fragment_html_file(fs_path)
-                except FileNotFoundError:
-                    err = json.dumps({
-                        "type": "RESP",
-                        "path": path,
-                        "frag": 1,
-                        "of_frag": 1,
-                        "data": f"404: {path} not found"
-                    })
-                    print(f"[WARN] File not found: {fs_path}")
-                    _send_text(radio, iface, err)
-                    return
+                    path = req.get('path') or '/'
+                    frag = req.get('frag')
 
-                total = len(frags)
-                print(f"[INFO] GET {path} → {total} fragment(s)")
-
-                envelopes = create_response_envelopes(path, frags)
-
-                # If a single fragment is requested
-                if frag is not None:
-                    try:
-                        i = int(frag)
-                    except Exception:
-                        i = -1
-                    if 1 <= i <= total:
-                        one = json.dumps(envelopes[i - 1])
-                        print(f"[TX  ] {path} frag {i}/{total}")
-                        _send_text(radio, iface, one)
-                        return
+                    # Normalize filesystem path: allow "/foo.html" or "foo.html" or "/html/foo.html"
+                    if path.startswith('/html/'):
+                        fs_path = path.lstrip('/')  # "html/foo.html"
+                    elif path.startswith('/'):
+                        fs_path = f"html{path}"  # "html/foo.html"
                     else:
-                        print(f"[WARN] Requested out-of-range frag {frag} for {path}")
+                        fs_path = os.path.join('html', path)  # "html/foo.html"
+
+                    try:
+                        frags = fragment_html_file(fs_path)
+                    except FileNotFoundError:
+                        err = json.dumps({
+                            "type": "RESP",
+                            "path": path,
+                            "frag": 1,
+                            "of_frag": 1,
+                            "data": f"404: {path} not found"
+                        })
+                        print(f"[WARN] File not found: {fs_path}")
+                        _send_text(radio, iface, err)
                         return
 
-                # Otherwise send all fragments in order
-                for env in envelopes:
-                    payload = json.dumps(env)
-                    print(f"[TX  ] {path} {env.get('frag')}/{env.get('of_frag')}")
-                    _send_text(radio, iface, payload)
-                return
+                    total = len(frags)
+                    print(f"[INFO] GET {path} → {total} fragment(s)")
+
+                    envelopes = create_response_envelopes(path, frags)
+
+                    # If a single fragment is requested
+                    if frag is not None:
+                        try:
+                            i = int(frag)
+                        except Exception:
+                            i = -1
+                        if 1 <= i <= total:
+                            one = json.dumps(envelopes[i - 1])
+                            print(f"[TX  ] {path} frag {i}/{total}")
+                            _send_text(radio, iface, one)
+                            return
+                        else:
+                            print(f"[WARN] Requested out-of-range frag {frag} for {path}")
+                            return
+
+                    # Otherwise send all fragments in order
+                    for env in envelopes:
+                        payload = json.dumps(env)
+                        print(f"[TX  ] {path} {env.get('frag')}/{env.get('of_frag')}")
+                        _send_text(radio, iface, payload)
+                    return
+                except Exception:
+                    print("[ERROR] GET handling failed:\n" + traceback.format_exc())
+                    # fall through to default echo
 
             # Default behavior: echo what we got (like the reader)
             if isinstance(txt, str):
