@@ -31,6 +31,8 @@ from pubsub import pub
 
 from radio import RadioInterface  # uses our resilient port resolution & wiring helpers
 
+from fragment import fragment_html_file, create_response_envelopes
+
 
 def _payload_text(decoded: dict) -> str | None:
     """Extract UTF-8 text from a decoded dict that may have 'text' or byte 'payload'."""
@@ -118,21 +120,67 @@ def main():
             portnum = dec.get('portnum') if isinstance(dec, dict) else None
             txt = dec.get('text') if isinstance(dec, dict) else None
 
-            # Try to pretty-print JSON if present
-            js = None
+            # Try to parse JSON if present
+            req = None
             if isinstance(txt, str):
                 try:
-                    js = json.loads(txt)
-                    print(f"[JSON] {js}")
+                    req = json.loads(txt)
+                    print(f"[JSON] {req}")
                 except Exception:
+                    # Not JSON → fall through to echo below
                     print(f"[TEXT] {txt}")
 
-            # Build a generic MiniHTTP-style response envelope for ANY inbound packet
+            # If it's a proper MiniHTTP GET, serve fragments
+            if isinstance(req, dict) and req.get('type') == 'GET':
+                path = req.get('path') or '/'
+                frag = req.get('frag')
+                fs_path = f"html{path}"
+                try:
+                    frags = fragment_html_file(fs_path)
+                except FileNotFoundError:
+                    err = json.dumps({
+                        "type": "RESP",
+                        "path": path,
+                        "frag": 1,
+                        "of_frag": 1,
+                        "data": f"404: {path} not found"
+                    })
+                    print(f"[WARN] File not found: {fs_path}")
+                    _send_text(radio, iface, err)
+                    return
+
+                total = len(frags)
+                print(f"[INFO] GET {path} → {total} fragment(s)")
+
+                envelopes = create_response_envelopes(path, frags)
+
+                # If a single fragment is requested
+                if frag is not None:
+                    try:
+                        i = int(frag)
+                    except Exception:
+                        i = -1
+                    if 1 <= i <= total:
+                        one = json.dumps(envelopes[i - 1])
+                        print(f"[TX  ] {path} frag {i}/{total}")
+                        _send_text(radio, iface, one)
+                        return
+                    else:
+                        print(f"[WARN] Requested out-of-range frag {frag} for {path}")
+                        return
+
+                # Otherwise send all fragments in order
+                for env in envelopes:
+                    payload = json.dumps(env)
+                    print(f"[TX  ] {path} {env.get('frag')}/{env.get('of_frag')}")
+                    _send_text(radio, iface, payload)
+                return
+
+            # Default behavior: echo what we got (like the reader)
             if isinstance(txt, str):
                 data_preview = (txt[:200] + '…') if len(txt) > 200 else txt
             else:
                 data_preview = f"port={portnum} id={packet.get('id')}"
-
             resp = {
                 "type": "RESP",
                 "path": "/echo",
