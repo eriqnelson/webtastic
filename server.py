@@ -1,5 +1,4 @@
 # server.py: MiniHTTP server entry point
-from listener import start_listener
 import json
 import traceback
 from pubsub import pub
@@ -164,8 +163,6 @@ def start_server(radio):
 
     print("[INFO] Subscribed to meshtastic.receive and connection topics")
 
-    # Keep the original listener for environments where it's required
-    start_listener(iface, handle_message)
 
 
 # Only run the server if this script is executed directly
