@@ -107,7 +107,6 @@ if __name__ == "__main__":
     radio = RadioInterface()
     print(f"[INFO] Default channel index (env): {os.getenv('DEFAULT_CHANNEL_INDEX', '1')}")
     path = input("Enter the file path to request (e.g. /test.html): ")
-    send_get_request(radio, path)
     print("Waiting for response... (Ctrl+C to exit)")
     try:
         start_client(radio, path)

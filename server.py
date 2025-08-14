@@ -1,6 +1,42 @@
 # server.py: MiniHTTP server entry point
 from listener import start_listener
 import json
+import traceback
+def _coerce_to_dict(msg):
+    """Try to turn various message shapes into a dict with keys we expect.
+    Accepts raw JSON string, Meshtastic decoded packet dicts, or already-JSON dicts.
+    Returns a tuple (ok: bool, payload: dict|None, reason: str|None).
+    """
+    try:
+        # Case 1: already a dict with 'type'
+        if isinstance(msg, dict) and ("type" in msg or "path" in msg):
+            return True, msg, None
+        # Case 2: Meshtastic packet with decoded text
+        if isinstance(msg, dict):
+            # Common shapes: {'decoded': {'text': '{...}'}} or {'text': '{...}'}
+            txt = None
+            d = msg.get("decoded") if isinstance(msg.get("decoded"), dict) else None
+            if d and isinstance(d.get("text"), str):
+                txt = d["text"]
+            elif isinstance(msg.get("text"), str):
+                txt = msg["text"]
+            if txt:
+                import json as _json
+                try:
+                    payload = _json.loads(txt)
+                    if isinstance(payload, dict):
+                        return True, payload, None
+                except Exception:
+                    return False, None, "decoded.text not JSON"
+        # Case 3: raw JSON string
+        if isinstance(msg, str):
+            import json as _json
+            payload = _json.loads(msg)
+            if isinstance(payload, dict):
+                return True, payload, None
+        return False, None, "unrecognized message shape"
+    except Exception as e:
+        return False, None, f"exception while coercing: {e}"
 
 # Helpers to work with either RadioInterface or a raw Meshtastic iface
 import os
@@ -56,6 +92,13 @@ def handle_get_message(message):
     Processes a GET message and returns a list of response envelopes.
     Handles full file or single fragment requests.
     """
+    ok, payload, reason = _coerce_to_dict(message)
+    if not ok:
+        print(f"[WARN] Ignoring message (cannot parse): {reason} | {type(message)} => {message}")
+        return []
+
+    message = payload
+
     if message.get("type") != "GET":
         return []
 
@@ -85,10 +128,18 @@ def start_server(radio):
     """
     Starts the MiniHTTP server by listening for GET messages and responding.
     """
-    def handle_message(message):
-        responses = handle_get_message(message)
-        for resp in responses:
-            _send_text(radio, json.dumps(resp))
+    def handle_message(raw):
+        try:
+            print(f"[DEBUG] RX: {raw}")
+            responses = handle_get_message(raw)
+            if not responses:
+                return
+            for resp in responses:
+                payload = json.dumps(resp)
+                print(f"[DEBUG] TX: {payload}")
+                _send_text(radio, payload)
+        except Exception:
+            print("[ERROR] Exception while handling message:\n" + traceback.format_exc())
 
     start_listener(_iface_of(radio), handle_message)
 
