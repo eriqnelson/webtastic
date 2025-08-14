@@ -5,6 +5,7 @@ import threading
 import time
 from pubsub import pub
 from typing import Optional
+
 def _coerce_to_dict(msg):
     """Try to turn various message shapes into a dict with keys we expect.
     Accepts raw JSON string, Meshtastic decoded packet dicts, or already-JSON dicts.
@@ -44,8 +45,10 @@ def _coerce_to_dict(msg):
 # Helpers to work with either RadioInterface or a raw Meshtastic iface
 import os
 
+
 def _iface_of(r):
     return getattr(r, "iface", r)
+
 
 def _default_channel_index():
     try:
@@ -53,17 +56,20 @@ def _default_channel_index():
     except Exception:
         return 1
 
+
 def _api_get_node(iface):
     try:
         return getattr(iface, "localNode", None)
     except Exception:
         return None
 
+
 def _api_get_channel(node, index: int):
     try:
         return node.getChannelByChannelIndex(index)
     except Exception:
         return None
+
 
 def _channel_info_dict(ch, index: int) -> Optional[dict]:
     if not ch:
@@ -73,6 +79,7 @@ def _channel_info_dict(ch, index: int) -> Optional[dict]:
     psk = getattr(s, "psk", "") or getattr(ch, "psk", "")
     is_primary = getattr(ch, "isPrimary", False) or getattr(s, "isPrimary", False)
     return {"index": index, "name": name, "psk_len": len(psk), "primary": is_primary}
+
 
 def _send_text(r, text):
     """Always send with an explicit channel index so we don't rely on wrapper defaults."""
@@ -97,6 +104,7 @@ def _send_text(r, text):
             except Exception as e2:
                 print(f"[ERROR] Fallback RadioInterface.send failed: {e2}")
 
+
 def create_response_envelopes(path, fragments):
     """
     Given a file path and a list of fragments, returns a list of response envelopes
@@ -115,6 +123,7 @@ def create_response_envelopes(path, fragments):
         })
 
     return envelopes
+
 
 from fragment import fragment_html_file
 
@@ -248,7 +257,6 @@ def start_server(radio):
     pub.subscribe(_on_any, "meshtastic.receive")
 
     print("[INFO] Subscribed to meshtastic.receive")
-
 
 
 # Only run the server if this script is executed directly

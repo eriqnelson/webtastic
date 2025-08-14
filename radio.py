@@ -1,11 +1,12 @@
 from dotenv import load_dotenv; load_dotenv()
 import os
+import glob
+import time
+from typing import Optional
 # Use the correct Meshtastic interface classes for each transport
 from meshtastic.serial_interface import SerialInterface
 from meshtastic.protobuf import config_pb2
 from pubsub import pub
-import time
-from typing import Optional
 
 def _api_get_node(iface) -> Optional[object]:
     try:
@@ -112,11 +113,67 @@ def ensure_lora_settings(node) -> None:
 
 DEFAULT_CHANNEL_INDEX = int(os.getenv("DEFAULT_CHANNEL_INDEX", 1))
 
+def _resolve_serial_devpath(env_path: Optional[str] = None) -> Optional[str]:
+    """Return a usable serial devpath.
+    Priority:
+      1) explicit env path (if exists), or glob expansion if env contains wildcards
+      2) MESHTASTIC_PORT_GLOB pattern (pick most-recent device)
+      3) common Linux/macOS patterns (pick most-recent device)
+    """
+    # 1) explicit path or wildcard provided via env
+    if env_path:
+        # If the given env path looks like a glob, expand it
+        if any(ch in env_path for ch in ['*', '?', '[']):
+            env_matches = glob.glob(env_path)
+            if env_matches:
+                try:
+                    newest_env = max(env_matches, key=lambda p: os.path.getmtime(p))
+                    return newest_env
+                except Exception:
+                    return env_matches[0]
+        # Otherwise treat it as a literal path
+        if os.path.exists(env_path):
+            return env_path
+
+    # 2) custom glob from env
+    pat = os.getenv("MESHTASTIC_PORT_GLOB")
+    candidates = []
+    if pat:
+        candidates.extend(glob.glob(pat))
+
+    # 3) common patterns by platform
+    if not candidates:
+        patterns = [
+            "/dev/ttyACM*",   # Linux CDC ACM
+            "/dev/ttyUSB*",   # Linux USB-serial
+            "/dev/tty.usbmodem*",   # macOS CDC ACM
+            "/dev/tty.usbserial*",  # macOS USB-serial
+            "/dev/tty.SLAB_USBtoUART",  # macOS CP210x (exact)
+            "/dev/tty.wchusbserial*",   # macOS CH34x
+        ]
+        for p in patterns:
+            candidates.extend(glob.glob(p))
+
+    # pick the most-recent device by mtime
+    if candidates:
+        try:
+            newest = max(candidates, key=lambda p: os.path.getmtime(p))
+            return newest
+        except Exception:
+            return candidates[0]
+    return None
+
 def get_radio_interface():
-    """Create a Meshtastic SerialInterface using .env devPath if provided, else auto-detect."""
+    """Create a Meshtastic SerialInterface using an env devPath if valid, else auto-resolve, else library auto-detect."""
     devpath = os.getenv("MESHTASTIC_PORT")
-    if devpath:
-        return SerialInterface(devPath=devpath)
+    resolved = _resolve_serial_devpath(devpath)
+    if resolved:
+        if devpath and devpath != resolved:
+            print(f"[INFO] MESHTASTIC_PORT '{devpath}' not found; using '{resolved}'")
+        else:
+            print(f"[INFO] Using serial port: {resolved}")
+        return SerialInterface(devPath=resolved)
+    print("[INFO] No explicit serial device found; attempting library auto-detect (may try TCP on failure)...")
     return SerialInterface()
 
 class RadioInterface:
@@ -186,9 +243,20 @@ class RadioInterface:
         self.iface.sendText(message, channelIndex=idx)
 
     def on_receive(self, callback):
-        """Register a callback to handle incoming messages."""
+        """Register a callback to handle incoming messages (both iface and pubsub)."""
         if not self._subscribed:
-            pub.subscribe(lambda packet, iface: callback(packet), "meshtastic.receive")
+            # Direct interface callback (works across versions)
+            try:
+                def _iface_on_receive(packet, interface):
+                    callback(packet)
+                self.iface.onReceive = _iface_on_receive
+            except Exception:
+                pass
+            # PubSub as a secondary path
+            try:
+                pub.subscribe(lambda packet=None, interface=None, **kw: callback(packet), "meshtastic.receive")
+            except Exception:
+                pass
             self._subscribed = True
 
     def run_forever(self):
