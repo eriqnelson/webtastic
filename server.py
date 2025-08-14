@@ -261,7 +261,7 @@ def start_server(radio):
     # Direct pubsub subscriptions (some environments deliver messages only via pubsub)
     # NOTE: The 'meshtastic.receive' root topic defines payload name 'packet';
     # all subtopics must include 'packet' in their handler signature per pypubsub rules.
-    def _on_any(packet=None, interface=None, **kwargs):
+    def _on_any(packet, interface):
         print(f"[DEBUG] pubsub receive packet: {packet}")
         handle_message(packet)
 
@@ -269,9 +269,8 @@ def start_server(radio):
 
     print("[INFO] Subscribed to meshtastic.receive")
 
-    # Some versions emit more specific subtopics; subscribe tolerantly
     try:
-        def _on_any_text(packet=None, interface=None, **kwargs):
+        def _on_any_text(packet, interface):
             print(f"[DEBUG] pubsub receive .text packet: {packet}")
             handle_message(packet)
         pub.subscribe(_on_any_text, "meshtastic.receive.text")
@@ -280,7 +279,7 @@ def start_server(radio):
         print(f"[WARN] Could not subscribe to meshtastic.receive.text: {e}")
 
     try:
-        def _on_any_data(packet=None, interface=None, **kwargs):
+        def _on_any_data(packet, interface):
             print(f"[DEBUG] pubsub receive .data packet: {packet}")
             handle_message(packet)
         pub.subscribe(_on_any_data, "meshtastic.receive.data")
@@ -297,7 +296,7 @@ def start_server(radio):
                 tname = str(topic)
             print(f"[DEBUG] pubsub ALL_TOPICS: {tname} kwargs={list(kwargs.keys())}")
             # If a 'packet' is present, try to handle it
-            pkt = kwargs.get('packet')
+            pkt = kwargs.get('packet') or kwargs.get('text') or kwargs.get('data')
             if pkt is not None:
                 handle_message(pkt)
         pub.subscribe(_on_all_topics, pub.ALL_TOPICS)
