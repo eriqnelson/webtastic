@@ -174,6 +174,9 @@ def start_server(radio):
     """
     iface = _iface_of(radio)
 
+    # Mutable holder for our node id so early handlers can read it before discovery completes
+    my_id_holder = {"id": None}
+
     # Diagnostics about interface/transport
     try:
         tname = type(iface).__name__
@@ -191,7 +194,8 @@ def start_server(radio):
             # Skip self-originated packets to avoid loops
             from_id = raw.get('fromId') if isinstance(raw, dict) else None
             from_id = from_id or (raw.get('from') if isinstance(raw, dict) else None)
-            if my_id and (str(from_id) == str(my_id)):
+            local_my_id = my_id_holder.get("id")
+            if local_my_id and (str(from_id) == str(local_my_id)):
                 print("[INFO] Skipping self-originated packet")
                 return
 
@@ -323,11 +327,10 @@ def start_server(radio):
         print(f"[WARN] Could not dump channels: {e}")
 
     # Discover our own node id to avoid responding to ourselves
-    my_id = None
     try:
         my = getattr(node, 'myInfo', None)
-        my_id = getattr(my, 'my_node_num', None) or getattr(my, 'my_node_id', None)
-        print(f"[INFO] My node: {my_id}")
+        my_id_holder["id"] = getattr(my, 'my_node_num', None) or getattr(my, 'my_node_id', None)
+        print(f"[INFO] My node: {my_id_holder['id']}")
     except Exception:
         print("[WARN] Could not determine local node id")
 
