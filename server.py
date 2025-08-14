@@ -291,6 +291,21 @@ def start_server(radio):
     except Exception as e:
         print(f"[WARN] PubSub subscribe failed: {e}")
 
+    # Log when the library signals that the connection to the radio is established
+    try:
+        def _on_conn_established(interface=None, topic=pub.AUTO_TOPIC):
+            print("[INFO] Connection established signaled by pubsub")
+            # Send a tiny ping so we can see TX works and other nodes can see us
+            try:
+                payload = json.dumps({"type": "RESP", "path": "/hello", "frag": 1, "of_frag": 1, "data": "server_online"})
+                _send_text(radio, payload)
+            except Exception as e:
+                print(f"[WARN] Failed to send hello after connection: {e}")
+        pub.subscribe(_on_conn_established, "meshtastic.connection.established")
+        print("[INFO] Subscribed to meshtastic.connection.established")
+    except Exception as e:
+        print(f"[WARN] Could not subscribe to connection established: {e}")
+
     # Wait briefly for localNode to initialize (avoids Node: None on slow boots)
     node = None
     for _ in range(20):  # up to ~10s total
