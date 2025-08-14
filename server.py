@@ -1,6 +1,8 @@
 # server.py: MiniHTTP server entry point
 import json
 import traceback
+import threading
+import time
 from pubsub import pub
 def _coerce_to_dict(msg):
     """Try to turn various message shapes into a dict with keys we expect.
@@ -130,6 +132,31 @@ def start_server(radio):
     """
     iface = _iface_of(radio)
 
+    # Diagnostics about interface/transport
+    try:
+        tname = type(iface).__name__
+        dev = getattr(iface, 'devPath', None) or getattr(iface, 'port', None)
+        print(f"[INFO] Interface: {tname} dev={dev}")
+    except Exception:
+        pass
+
+    # Optional: emit a periodic beacon to verify TX path
+    if os.getenv('SERVER_DEBUG_BEACON') in {'1','true','yes','on','y'}:
+        def _beacon_loop():
+            n = 0
+            while True:
+                try:
+                    payload = json.dumps({"type":"RESP","path":"/beacon","frag":1,"of_frag":1,"data":f"server_beacon_{n}"})
+                    print(f"[DEBUG] TX(beacon): {payload}")
+                    _send_text(radio, payload)
+                    n += 1
+                except Exception as e:
+                    print(f"[WARN] Beacon send error: {e}")
+                time.sleep(5)
+        th = threading.Thread(target=_beacon_loop, daemon=True)
+        th.start()
+        print("[INFO] Debug beacon enabled (SERVER_DEBUG_BEACON=1)")
+
     # Attach direct interface callback (works even if pubsub topics vary by version)
     try:
         def _iface_on_receive(packet, interface):
@@ -171,7 +198,6 @@ def start_server(radio):
 if __name__ == "__main__":
     try:
         from radio import RadioInterface
-        import time
         # Open a single interface (no provisioning; provisioning handled elsewhere)
         radio = RadioInterface()
         print(f"[INFO] Default channel index (env): {os.getenv('DEFAULT_CHANNEL_INDEX', '1')}")
