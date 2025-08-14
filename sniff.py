@@ -18,6 +18,15 @@ import json
 import os
 import sys
 import time
+import threading
+
+VERBOSE = True  # set False to quiet non-JSON traffic
+
+TRUTHY = {"1", "true", "yes", "on", "y"}
+
+def _is_on(name: str) -> bool:
+    return (os.getenv(name) or "").strip().lower() in TRUTHY
+
 from pubsub import pub
 
 from radio import RadioInterface  # uses our resilient port resolution & wiring helpers
@@ -39,6 +48,25 @@ def _payload_text(decoded: dict) -> str | None:
         except Exception:
             return None
     return None
+
+
+# Helper to send a text payload (for heartbeat etc)
+def _send_text(radio, iface, payload: str):
+    try:
+        ch_env = os.getenv('DEFAULT_CHANNEL_INDEX', '1')
+        ch = int(ch_env) if ch_env.isdigit() else 1
+    except Exception:
+        ch = 1
+    try:
+        # Prefer RadioInterface wrapper if it has .send
+        if hasattr(radio, 'send'):
+            print(f"[TX  ] channel={ch} payload={payload}")
+            radio.send(payload)
+        else:
+            print(f"[TX  ] channel={ch} payload={payload}")
+            iface.sendText(payload, channelIndex=ch)
+    except Exception as e:
+        print(f"[WARN] Heartbeat send error: {e}")
 
 
 def main():
@@ -65,25 +93,31 @@ def main():
         print(f"[WARN] Could not read nodes: {e}")
 
     def handle_packet(packet):
-        # Unified receive path
+        # Always show the raw dict
+        print(f"[RAW ] {packet}")
         try:
             dec = packet.get('decoded') if isinstance(packet, dict) else None
             portnum = dec.get('portnum') if isinstance(dec, dict) else None
-            if portnum == 'TEXT_MESSAGE_APP':
-                msg = _payload_text(dec)
-                from_id = packet.get('fromId') or packet.get('from')
-                short = shortnames.get(str(from_id), 'Unknown')
-                print(f"{short} ({from_id}): {msg}")
-            else:
-                # Uncomment if you want to see everything
-                # print(f"[OTHER] {packet}")
-                pass
+            txt = dec.get('text') if isinstance(dec, dict) else None
+            if isinstance(txt, str):
+                # Try to pretty-print JSON if present
+                try:
+                    js = json.loads(txt)
+                    print(f"[JSON] {js}")
+                except Exception:
+                    print(f"[TEXT] {txt}")
+            elif VERBOSE and isinstance(dec, dict):
+                # Show non-text payloads briefly
+                payload = dec.get('payload')
+                bf = dec.get('bitfield')
+                print(f"[INFO] port={portnum} bitfield={bf} payload_type={type(payload).__name__}")
         except Exception as e:
             print(f"[WARN] Parse error: {e} | packet={packet}")
 
     # Attach direct interface callback
     try:
         def _iface_on_receive(packet, interface):
+            print("[IFACE]")
             handle_packet(packet)
         iface.onReceive = _iface_on_receive
         print("[INFO] Attached iface.onReceive callback")
@@ -92,12 +126,32 @@ def main():
 
     # Subscribe to pubsub as well
     try:
-        pub.subscribe(lambda packet=None, interface=None, **kw: handle_packet(packet), "meshtastic.receive")
+        def _on_pub(packet=None, interface=None, **kw):
+            print("[PUBSB]")
+            handle_packet(packet)
+        pub.subscribe(_on_pub, "meshtastic.receive")
         print("[INFO] Subscribed to meshtastic.receive")
     except Exception as e:
         print(f"[WARN] PubSub subscribe failed: {e}")
 
     print("[INFO] Listening… Ctrl+C to stop")
+    print(f"[INFO] MESHTASTIC_PORT={os.getenv('MESHTASTIC_PORT')} | DEFAULT_CHANNEL_INDEX={os.getenv('DEFAULT_CHANNEL_INDEX','1')} | SNIFF_HEARTBEAT={os.getenv('SNIFF_HEARTBEAT','0')}")
+    # Optional heartbeat beacon: set SNIFF_HEARTBEAT=1 to enable
+    if _is_on('SNIFF_HEARTBEAT'):
+        def _hb_loop():
+            n = 0
+            while True:
+                try:
+                    # JSON heartbeat so other tools can parse
+                    hb = json.dumps({"type": "HB", "node": shortnames.get(str(getattr(getattr(iface, 'localNode', None), 'myInfo', None)), None), "seq": n, "ts": int(time.time())})
+                    _send_text(radio, iface, hb)
+                    n += 1
+                except Exception as e:
+                    print(f"[WARN] Heartbeat loop error: {e}")
+                time.sleep(5)
+        threading.Thread(target=_hb_loop, daemon=True).start()
+        print("[INFO] Heartbeat enabled (SNIFF_HEARTBEAT=1)")
+
     try:
         while True:
             sys.stdout.flush()
