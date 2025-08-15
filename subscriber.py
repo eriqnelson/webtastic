@@ -9,6 +9,19 @@ def _is_on(name: str) -> bool:
     return (os.getenv(name) or "").strip().lower() in TRUTHY
 
 
+def _default_channel_index() -> int:
+    env = (os.getenv("DEFAULT_CHANNEL_INDEX") or "1").strip()
+    try:
+        return int(env)
+    except Exception:
+        return 1
+
+
+def _chan_filter_on() -> bool:
+    # When true, JSON envelopes with a 'chan' field must match DEFAULT_CHANNEL_INDEX
+    return _is_on("LISTENER_FILTER_CHANNEL")
+
+
 def _payload_text(packet: dict) -> str | None:
     """Extract UTF-8 text from a decoded dict that may have 'text' or byte 'payload'.
     Also tolerate top-level 'text' kw that some pubsub senders provide.
@@ -27,6 +40,11 @@ def _payload_text(packet: dict) -> str | None:
         if isinstance(raw, (bytes, bytearray)):
             try:
                 return raw.decode("utf-8", errors="replace")
+            except Exception:
+                return None
+        if isinstance(raw, list) and all(isinstance(b, int) for b in raw):
+            try:
+                return bytes(raw).decode("utf-8", errors="replace")
             except Exception:
                 return None
     except Exception:
@@ -109,25 +127,41 @@ def start_listener(radio, callback):
         if debug:
             print(f"[LISTENER] RAW: {packet}")
         txt = _payload_text(packet)
-        if isinstance(txt, str):
-            # Try JSON first
-            try:
-                js = json.loads(txt)
-                if debug:
-                    print(f"[LISTENER] JSON: {js}")
-                _deliver(callback, js, packet)
-                return
-            except Exception:
-                if debug:
-                    print(f"[LISTENER] TEXT: {txt[:160]}")
-                if passthru:
-                    pseudo = {"type": "TEXT", "data": txt}
-                    _deliver(callback, pseudo, packet)
-                return
-        else:
+        if not isinstance(txt, str):
             if debug:
                 port = (packet.get("decoded") or {}).get("portnum")
                 print(f"[LISTENER] Non-text port={port} (no delivery)")
+            return
+
+        # Recognize optional publisher stamp: "MH1 " prefix
+        if txt.startswith("MH1 "):
+            body = txt[4:]
+        else:
+            body = txt
+
+        # Try to parse JSON
+        try:
+            js = json.loads(body)
+            if debug:
+                print(f"[LISTENER] JSON: {js}")
+            # Optional channel filter if publisher provided 'chan'
+            if _chan_filter_on():
+                chan = js.get("chan")
+                if chan is not None and str(chan) != str(_default_channel_index()):
+                    if debug:
+                        print(f"[LISTENER] Drop: chan {chan} != wanted {_default_channel_index()}")
+                    return
+            _deliver(callback, js, packet)
+            return
+        except Exception:
+            # Not JSON — treat as plain text
+            if debug:
+                preview = txt[:160]
+                print(f"[LISTENER] TEXT: {preview}")
+            if passthru:
+                pseudo = {"type": "TEXT", "data": txt}
+                _deliver(callback, pseudo, packet)
+            return
 
     # Direct interface callback (like server2)
     try:

@@ -16,6 +16,8 @@ Run modes:
 Env:
   MESHTASTIC_PORT, DEFAULT_CHANNEL_INDEX as usual
   LISTENER_DEBUG=1, PUBLISHER_DEBUG=1 for verbose logs
+  PUBLISHER_STAMP=1 to prefix frames with "MH1 " for easy subscriber detection
+  LISTENER_FILTER_CHANNEL=1 to drop envelopes whose chan != DEFAULT_CHANNEL_INDEX
 """
 from __future__ import annotations
 
@@ -115,9 +117,9 @@ def main(argv: list[str]) -> int:
 
     # Optionally send probe
     if args.probe and not args.send:
-        probe = {"type": "RESP", "path": "/echo", "frag": 1, "of_frag": 1, "data": "probe_from_pubsubtest"}
-        print(f"[TX PROBE] {probe}")
-        send_json(radio, probe)
+        print("[TX PROBE] envelope /echo 1/1 'probe_from_pubsubtest'")
+        # Use send_envelope so we exercise the new compact schema + optional MH1 stamp
+        send_envelope(radio, path="/echo", frag=1, of_frag=1, data="probe_from_pubsubtest", type_="RESP")
 
     # Optionally send once on start
     if args.send:

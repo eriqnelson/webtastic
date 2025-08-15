@@ -1,5 +1,3 @@
-
-
 #!/usr/bin/env python3
 """
 publisher.py — generic MiniHTTP/Meshtastic publisher helpers (API-only, serial-only)
@@ -37,11 +35,27 @@ import json
 import os
 from typing import Any, Iterable
 
+# --- Compatibility helpers to make subscriber parsing easier -----------------
+MINIHTTP_VERSION = 1
+TRAILER = ""  # reserved for future use
+
+# Meshtastic text frames have a practical size budget; keep JSON compact
+# Use compact separators and avoid whitespace.
+_def_json_kwargs = dict(separators=(",", ":"), ensure_ascii=False)
+
 TRUTHY = {"1", "true", "yes", "on", "y"}
 
 
 def _is_on(name: str) -> bool:
     return (os.getenv(name) or "").strip().lower() in TRUTHY
+
+
+def _stamp_enabled() -> bool:
+    """If enabled, prefix text with a magic header so the subscriber can
+    detect/route MiniHTTP frames quickly without costly JSON probing.
+    Set PUBLISHER_STAMP=1 to enable.
+    """
+    return _is_on("PUBLISHER_STAMP")
 
 
 def _default_channel_index() -> int:
@@ -56,15 +70,42 @@ def _iface_of(radio):
     return getattr(radio, "iface", radio)
 
 
+def _json_dumps(obj: Any) -> str:
+    """Compact, UTF-8 JSON string suitable for Meshtastic text payloads."""
+    return json.dumps(obj, **_def_json_kwargs)
+
+
+def _stamp_text(text: str) -> str:
+    """Optionally add a tiny header the subscriber can key off of.
+    Format: "MH1 " + text
+    """
+    if _stamp_enabled():
+        return f"MH{MINIHTTP_VERSION} " + text
+    return text
+
+
+def _build_env(**fields) -> dict:
+    env = {
+        "ver": MINIHTTP_VERSION,
+        "type": fields.pop("type_", None) or fields.pop("type", None) or "RESP",
+        "ts": int(__import__("time").time()),
+        **fields,
+    }
+    # Include channel hint so the subscriber can optionally filter/log
+    env.setdefault("chan", _default_channel_index())
+    return env
+
+
 def _send_text_core(radio, text: str) -> None:
     """Prefer RadioInterface.send(); fall back to iface.sendText(channelIndex=N)."""
     debug = _is_on("PUBLISHER_DEBUG")
+    text = _stamp_text(text)
 
     # Try high-level send first (lets the library choose the right channel)
     try:
         if hasattr(radio, "send"):
             if debug:
-                print(f"[PUB] TX (radio.send) {text}")
+                print(f"[PUB] TX (radio.send) len={len(text)} {text[:80]!r}")
             radio.send(text)
             return
     except Exception as e:
@@ -78,7 +119,7 @@ def _send_text_core(radio, text: str) -> None:
             dev = getattr(iface, 'devPath', None) or getattr(iface, 'port', None)
         except Exception:
             dev = None
-        print(f"[PUB] TX (fallback) ch={ch} dev={dev} {text}")
+        print(f"[PUB] TX (fallback) ch={ch} dev={dev} len={len(text)} {text[:80]!r}")
     iface.sendText(text, channelIndex=int(ch))
 
 
@@ -92,9 +133,9 @@ def send_text(radio, text: str) -> None:
 
 
 def send_json(radio, obj: Any) -> None:
-    """Serialize obj as JSON and send as text."""
+    """Serialize obj as compact JSON and send as text (with optional MH1 stamp)."""
     try:
-        payload = json.dumps(obj)
+        payload = _json_dumps(obj)
     except Exception as e:
         raise ValueError(f"Object not JSON-serializable: {e}")
     _send_text_core(radio, payload)
@@ -109,16 +150,15 @@ def send_envelope(
     data: str,
     type_: str = "RESP",
 ) -> None:
-    """Send a single MiniHTTP envelope (RESP by default)."""
+    """Send a single MiniHTTP envelope (RESP by default) with a tiny schema.
+
+    Envelope schema (all strings/numbers):
+      {"ver":1, "type":"RESP", "path":"/index.html", "frag":1, "of":3,
+       "chan":<int>, "data":"...", "ts":<unix>}
+    """
     if not isinstance(data, str):
         data = str(data)
-    env = {
-        "type": type_,
-        "path": path,
-        "frag": int(frag),
-        "of_frag": int(of_frag),
-        "data": data,
-    }
+    env = _build_env(path=path, frag=int(frag), of=int(of_frag), data=data, type_=type_)
     if _is_on("PUBLISHER_DEBUG"):
         print(f"[PUB] ENV TX path={path} {frag}/{of_frag} len={len(data)}")
     send_json(radio, env)
@@ -133,4 +173,6 @@ def send_fragments(radio, path: str, fragments: Iterable[str], *, type_: str = "
     total = len(frags)
     for idx, chunk in enumerate(frags, start=1):
         send_envelope(radio, path=path, frag=idx, of_frag=total, data=chunk, type_=type_)
+    if _is_on("PUBLISHER_DEBUG"):
+        print(f"[PUB] FRAGS TX path={path} total={total}")
     return total
