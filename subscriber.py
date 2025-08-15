@@ -126,6 +126,24 @@ def start_listener(radio, callback):
     def _handle(packet: dict):
         if debug:
             print(f"[LISTENER] RAW: {packet}")
+        # Fire an unconditional ANY event so we react to *every* packet
+        try:
+            dec = packet.get("decoded") or {}
+            port = dec.get("portnum")
+            any_evt = {"type": "ANY", "port": port}
+            chan = packet.get("channel") or packet.get("channelIndex")
+            if chan is not None:
+                any_evt["chan"] = chan
+            src = packet.get("fromId") or packet.get("from")
+            if src is not None:
+                any_evt["from"] = src
+            _deliver(callback, any_evt, packet)
+            if debug:
+                print("[LISTENER] ANY event delivered (pre-parse)")
+        except Exception as _e:
+            if debug:
+                print(f"[LISTENER] WARN: ANY event delivery failed: {_e}")
+
         txt = _payload_text(packet)
         if not isinstance(txt, str):
             if debug:
