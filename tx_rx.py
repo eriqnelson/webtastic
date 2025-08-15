@@ -1,5 +1,3 @@
-
-
 #!/usr/bin/env python3
 """
 tx_rx.py — ultra-minimal TX/RX pair for Meshtastic (serial-only, API-only)
@@ -112,8 +110,9 @@ class SimpleRadio:
             channel_index = _channel()
         if not isinstance(text, str):
             text = str(text)
-        print(f"[TX  ] channel={channel_index} to={node_id or '^all'} len={len(text)}")
-        self.iface.sendText(text, node_id, channelIndex=channel_index)
+        dest = node_id or "^all"  # Explicit broadcast if no destination provided
+        print(f"[TX  ] channel={channel_index} to={dest} len={len(text)}")
+        self.iface.sendText(text, dest, channelIndex=channel_index)
 
     # ----- RX -----
     def start_rx_loop(self, *, only_channel: Optional[int] = None):
@@ -200,7 +199,7 @@ def main(argv=None):
     p_tx = sub.add_parser("tx", help="send a text message (broadcast or to a node)")
     p_tx.add_argument("--text", help="text to send")
     p_tx.add_argument("--file", help="path to a file to read and send")
-    p_tx.add_argument("--dest", help="nodeId to send to (e.g. !ec2dca42); default is broadcast", default=None)
+    p_tx.add_argument("--dest", help="nodeId to send to (e.g. !ec2dca42); default is broadcast", default="^all")
     p_tx.add_argument("--channel", type=int, help="channel index (default from DEFAULT_CHANNEL_INDEX or 1)", default=None)
     p_tx.set_defaults(func=_cmd_tx)
 
