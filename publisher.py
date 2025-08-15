@@ -120,8 +120,7 @@ def _send_text_core(radio, text: str) -> None:
         except Exception:
             dev = None
         print(f"[PUB] TX (fallback) ch={ch} dev={dev} len={len(text)} {text[:80]!r}")
-    iface.sendText(text, channelIndex=int(ch))
-
+    iface.sendText(text, destinationId="^all", channelIndex=int(ch))
 
 # --- Public helpers ---------------------------------------------------------
 
