@@ -40,11 +40,11 @@ def _is_on(name: str) -> bool:
     return (os.getenv(name) or "").strip().lower() in TRUTHY
 
 def _downloads_dir() -> Path:
-    # XDG first, then ~/downloads
-    xdg = os.getenv("XDG_DOWNLOAD_DIR")
-    if xdg:
-        return Path(os.path.expanduser(xdg)).resolve()
-    return (Path.home() / "downloads").resolve()
+    """Default output directory inside the webtastic project.
+    Resolves to <repo_root>/downloads next to this script file.
+    """
+    base = Path(__file__).resolve().parent
+    return (base / "downloads").resolve()
 
 # ----------------------------- Helpers ---------------------------------------
 
