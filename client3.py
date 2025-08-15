@@ -30,7 +30,7 @@ from typing import Dict, List, Tuple, Optional
 from pubsub import pub
 
 from radio import RadioInterface
-from listener import start_listener
+from subscriber import start_listener
 from publisher import send_json
 
 TRUTHY = {"1", "true", "yes", "on", "y"}

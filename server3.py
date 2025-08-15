@@ -35,7 +35,7 @@ from pubsub import pub
 
 # Local modules
 from radio import RadioInterface
-from listener import start_listener
+from subscriber import start_listener
 from publisher import send_text, send_json, send_fragments
 from fragment import fragment_html_file
 
