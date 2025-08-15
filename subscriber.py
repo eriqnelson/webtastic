@@ -108,12 +108,10 @@ def start_listener(radio, callback):
         print(f"[LISTENER] WARN: Could not attach iface.onReceive: {e}")
 
     # Subscribe to pubsub topics with a robust handler that tolerates varying signatures
-    def _on_pub(*args, **kw):
-        # pyPubSub may pass packet as kw or as the first positional arg
-        packet = kw.get('packet')
-        if packet is None and args:
-            packet = args[0]
-        interface = kw.get('interface')
+    def _on_pub(packet=None, interface=None, topic=pub.AUTO_TOPIC, **kw):
+        """Robust pubsub bridge with explicit arg names so pyPubSub sets the topic spec
+        to accept `packet` and `interface` (prevents SenderUnknownMsgDataError).
+        """
         _handle(packet, interface=interface)
 
     pub.subscribe(_on_pub, "meshtastic.receive")
