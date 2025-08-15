@@ -1,3 +1,9 @@
+## What's Working
+
+- Server (`server.py`) can listen for GET requests and serve HTML files from the `webtastic/html` directory over the Meshtastic mesh network.
+- Client (`client.py`) can request a file by path, receive multiple fragments, reassemble them, and save the result into the `webtastic/downloads` directory.
+- End-to-end flow confirmed for multi-fragment HTML files, with proper reassembly and saving.
+
 # Webtastic v0.1
 
 **Project Title:** Webtastic v0.1  
