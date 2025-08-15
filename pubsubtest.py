@@ -26,6 +26,8 @@ import sys
 import time
 from typing import Any, Optional
 
+from functools import partial
+
 from pubsub import pub
 
 # Local modules
@@ -82,16 +84,40 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--frag", type=int, default=1, help="Fragment number (1-based)")
     ap.add_argument("--of-frag", type=int, default=1, help="Total fragments")
     ap.add_argument("--data", default="pubsubtest", help="Payload data string")
+    ap.add_argument("--probe", action="store_true", help="Send a small JSON echo probe to verify RX path")
+    ap.add_argument("--tap", action="store_true", help="Also tap pubsub directly (meshtastic.receive) for raw verification")
+    ap.add_argument("--tap-all", action="store_true", help="Tap ALL pubsub topics for deep debugging")
     args = ap.parse_args(argv)
 
     # Bring up radio & iface
     radio = RadioInterface()
     iface = _iface_of(radio)
     _print_iface_diag(iface)
+    print("[INFO] Wiring subscriber (start_listener)…")
 
     # Wire listener and connection notice
     start_listener(radio, _on_message)
+    print("[INFO] Listener armed (subscriber.start_listener)")
+
+    if args.tap:
+        def _tap(packet=None, interface=None, topic=pub.AUTO_TOPIC, **kw):
+            print(f"[TAP ] topic={topic.getName()} from={getattr(packet, 'fromId', None) or (packet or {}).get('fromId')} decoded={(packet or {}).get('decoded', {})}")
+        pub.subscribe(_tap, "meshtastic.receive")
+        print("[INFO] Tap enabled on meshtastic.receive")
+
+    if args.tap_all:
+        def _tap_all(topic=pub.AUTO_TOPIC, **kw):
+            print(f"[TAP*] topic={topic.getName()} data_keys={list(kw.keys())}")
+        pub.subscribe(_tap_all, pub.ALL_TOPICS)
+        print("[INFO] Tap enabled on ALL_TOPICS (noisy)")
+
     pub.subscribe(_on_conn, "meshtastic.connection.established")
+
+    # Optionally send probe
+    if args.probe and not args.send:
+        probe = {"type": "RESP", "path": "/echo", "frag": 1, "of_frag": 1, "data": "probe_from_pubsubtest"}
+        print(f"[TX PROBE] {probe}")
+        send_json(radio, probe)
 
     # Optionally send once on start
     if args.send:
