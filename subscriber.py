@@ -12,11 +12,9 @@ def _payload_text(packet: dict) -> str | None:
     """Extract UTF-8 text from a decoded dict that may have 'text' or byte 'payload'."""
     try:
         dec = packet.get("decoded") or {}
-        # Preferred: decoded.text (Meshtastic sets this for TEXT_MESSAGE_APP)
         txt = dec.get("text")
         if isinstance(txt, str):
             return txt
-        # Fallback: decoded.payload (bytes) → utf-8
         raw = dec.get("payload")
         if isinstance(raw, (bytes, bytearray)):
             try:
@@ -29,10 +27,10 @@ def _payload_text(packet: dict) -> str | None:
 
 
 def _deliver(callback, parsed_json, packet):
-    """Call the callback in a backward-compatible way.
-    - If the callback accepts 2 args, send (parsed_json, packet).
-    - Else, send just (parsed_json) like the old listener.
-    Only deliver when parsed_json is not None to preserve old semantics.
+    """Back-compat delivery helper.
+    - If callback takes 2 args, call (parsed_json, packet)
+    - Else call (parsed_json)
+    Only deliver when parsed_json is not None.
     """
     if parsed_json is None:
         return
@@ -42,80 +40,79 @@ def _deliver(callback, parsed_json, packet):
         except Exception:
             print("[LISTENER] Delivering to callback (non-dict payload)")
     try:
-        # Try 2-arg style first
-        if getattr(callback, "__code__", None) and callback.__code__.co_argcount >= 2:
+        code = getattr(callback, "__code__", None)
+        if code and code.co_argcount >= 2:
             callback(parsed_json, packet)
         else:
             callback(parsed_json)
     except TypeError:
-        # Fall back to single-arg if signature mismatch
         callback(parsed_json)
 
 
 def start_listener(radio, callback):
     """
-    Generic Meshtastic listener (API-only) that routes inbound packets to a callback.
+    Minimal, robust Meshtastic listener modeled after server2:
+      • Subscribes ONLY to "meshtastic.receive" (prevents topic arg-spec clashes)
+      • Also wires iface.onReceive (covers stacks that use direct callback)
+      • Parses JSON from TEXT_MESSAGE_APP (decoded.text or payload bytes)
+      • Optional pass-through for non-JSON text (LISTENER_PASS_THRU=1)
 
-    Enhancements over the original:
-      • Subscribes to meshtastic.receive, .receive.text, and .receive.data
-      • Also wires iface.onReceive (some stacks only hit the direct callback)
-      • Safely parses JSON messages from TEXT_MESSAGE_APP, but will also parse any
-        UTF‑8 payload that looks like JSON.
-      • Backward-compatible callback delivery: callback(message) as before, or
-        callback(message, packet) if you want raw context.
-
-    Env toggles:
-      • LISTENER_DEBUG=1      → print raw packets as they arrive.
-      • LISTENER_PASS_THRU=1  → deliver non-JSON text as {"type":"TEXT","data":...}
+    Env flags:
+      LISTENER_DEBUG=1      → verbose logs (RAW, PUBSB, TEXT, etc)
+      LISTENER_PASS_THRU=1  → deliver non-JSON text as {"type":"TEXT","data":...}
     """
     iface = getattr(radio, "iface", radio)
     debug = _is_on("LISTENER_DEBUG")
 
-    def _handle(packet, interface=None, **kw):
+    def _handle(packet):
         if debug:
             print(f"[LISTENER] RAW: {packet}")
         txt = _payload_text(packet)
         if isinstance(txt, str):
             try:
                 js = json.loads(txt)
-                # Always show a JSON line so delivery is visible even if LISTENER_DEBUG is off
                 print(f"[LISTENER] JSON: {js}")
                 _deliver(callback, js, packet)
                 return
             except Exception:
-                # Not JSON; optionally deliver plain text if pass-through is enabled
                 if debug:
-                    print(f"[LISTENER] TEXT (non-JSON): {txt[:120]}")
-                if _is_on('LISTENER_PASS_THRU'):
+                    print(f"[LISTENER] TEXT (non-JSON): {txt[:160]}")
+                if _is_on("LISTENER_PASS_THRU"):
                     pseudo = {"type": "TEXT", "data": txt}
                     print(f"[LISTENER] PASS-THRU TEXT → {pseudo}")
                     _deliver(callback, pseudo, packet)
                 return
         else:
-            # No text payload; nothing to deliver for legacy callback
             if debug:
                 port = (packet.get("decoded") or {}).get("portnum")
                 print(f"[LISTENER] Non-text port={port} (no delivery)")
 
-    # Attach direct interface callback (covers cases where pubsub isn't used)
+    # Direct interface callback (like server2)
     try:
         def _iface_on_receive(packet, interface):
-            _handle(packet, interface=interface)
+            if debug:
+                print("[IFACE]")
+            _handle(packet)
         iface.onReceive = _iface_on_receive
         if debug:
             print("[LISTENER] Attached iface.onReceive callback")
     except Exception as e:
         print(f"[LISTENER] WARN: Could not attach iface.onReceive: {e}")
 
-    # Subscribe to pubsub topics with a robust handler that tolerates varying signatures
+    # PubSub: subscribe only to the base topic (like server2)
     def _on_pub(packet=None, interface=None, topic=pub.AUTO_TOPIC, **kw):
-        """Robust pubsub bridge with explicit arg names so pyPubSub sets the topic spec
-        to accept `packet` and `interface` (prevents SenderUnknownMsgDataError).
-        """
-        _handle(packet, interface=interface)
+        if debug:
+            try:
+                tn = ".".join(topic.getNameTuple()) if hasattr(topic, "getNameTuple") else str(topic)
+            except Exception:
+                tn = "meshtastic.receive"
+            print(f"[PUBSB] topic={tn}")
+        if packet is None:
+            if debug:
+                print("[LISTENER] WARN: _on_pub called without packet")
+            return
+        _handle(packet)
 
     pub.subscribe(_on_pub, "meshtastic.receive")
-    pub.subscribe(_on_pub, "meshtastic.receive.text")
-    pub.subscribe(_on_pub, "meshtastic.receive.data")
     if debug:
-        print("[LISTENER] Subscribed to meshtastic.receive, .text, .data (robust handler)")
+        print("[LISTENER] Subscribed to meshtastic.receive (server2-style)")
