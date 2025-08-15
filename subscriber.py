@@ -107,9 +107,17 @@ def start_listener(radio, callback):
     except Exception as e:
         print(f"[LISTENER] WARN: Could not attach iface.onReceive: {e}")
 
-    # Subscribe to pubsub topics
-    pub.subscribe(lambda packet=None, interface=None, **kw: _handle(packet, interface=interface), "meshtastic.receive")
-    pub.subscribe(lambda packet=None, interface=None, **kw: _handle(packet, interface=interface), "meshtastic.receive.text")
-    pub.subscribe(lambda packet=None, interface=None, **kw: _handle(packet, interface=interface), "meshtastic.receive.data")
+    # Subscribe to pubsub topics with a robust handler that tolerates varying signatures
+    def _on_pub(*args, **kw):
+        # pyPubSub may pass packet as kw or as the first positional arg
+        packet = kw.get('packet')
+        if packet is None and args:
+            packet = args[0]
+        interface = kw.get('interface')
+        _handle(packet, interface=interface)
+
+    pub.subscribe(_on_pub, "meshtastic.receive")
+    pub.subscribe(_on_pub, "meshtastic.receive.text")
+    pub.subscribe(_on_pub, "meshtastic.receive.data")
     if debug:
-        print("[LISTENER] Subscribed to meshtastic.receive, .text, .data")
+        print("[LISTENER] Subscribed to meshtastic.receive, .text, .data (robust handler)")
