@@ -39,6 +39,13 @@ TRUTHY = {"1", "true", "yes", "on", "y"}
 def _is_on(name: str) -> bool:
     return (os.getenv(name) or "").strip().lower() in TRUTHY
 
+def _downloads_dir() -> Path:
+    # XDG first, then ~/downloads
+    xdg = os.getenv("XDG_DOWNLOAD_DIR")
+    if xdg:
+        return Path(os.path.expanduser(xdg)).resolve()
+    return (Path.home() / "downloads").resolve()
+
 # ----------------------------- Helpers ---------------------------------------
 
 def _default_channel_index() -> int:
@@ -165,12 +172,17 @@ class MiniHttpClient:
                 self._emit("".join(chunks))
 
     def _emit(self, content: str) -> None:
+        # Decide output path: explicit --out wins; otherwise ~/Downloads/<basename>
         if self.out_path:
-            self.out_path.write_text(content, encoding="utf-8")
-            print(f"[SAVE] wrote {self.out_path}")
+            out_path = self.out_path
         else:
-            sys.stdout.write(content)
-            sys.stdout.flush()
+            base = Path(self.path).name or "index.html"
+            out_path = _downloads_dir() / base
+        # Ensure parent exists
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(content, encoding="utf-8")
+        print(f"[SAVE] wrote {out_path}")
+        # Successful completion → exit
         os._exit(0)
 
     # ---- Wiring ----
