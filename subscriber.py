@@ -4,13 +4,21 @@ from pubsub import pub
 
 TRUTHY = {"1", "true", "yes", "on", "y"}
 
+
 def _is_on(name: str) -> bool:
     return (os.getenv(name) or "").strip().lower() in TRUTHY
 
 
 def _payload_text(packet: dict) -> str | None:
-    """Extract UTF-8 text from a decoded dict that may have 'text' or byte 'payload'."""
+    """Extract UTF-8 text from a decoded dict that may have 'text' or byte 'payload'.
+    Also tolerate top-level 'text' kw that some pubsub senders provide.
+    """
     try:
+        # If someone passed text at top-level (splatted kwargs), honor it
+        top_txt = packet.get("text")
+        if isinstance(top_txt, str):
+            return top_txt
+
         dec = packet.get("decoded") or {}
         txt = dec.get("text")
         if isinstance(txt, str):
@@ -26,27 +34,58 @@ def _payload_text(packet: dict) -> str | None:
     return None
 
 
-def _deliver(callback, parsed_json, packet):
-    """Back-compat delivery helper.
-    - If callback takes 2 args, call (parsed_json, packet)
-    - Else call (parsed_json)
-    Only deliver when parsed_json is not None.
+def _synthesize_packet_from_kwargs(**kw) -> dict:
+    """Build a packet-like dict when pubsub calls us without `packet=`.
+    We accept common fields as separate kwargs and normalize them.
     """
-    if parsed_json is None:
+    pkt = {}
+    # Known top-level fields that might arrive splatted
+    for k in (
+        "from", "to", "id", "channel", "fromId", "toId", "rxTime",
+        "hopLimit", "priority", "raw", "rxSnr", "rxRssi", "hopStart",
+    ):
+        if k in kw:
+            pkt[k] = kw[k]
+
+    # decoded bits may be provided as a kw already
+    dec = kw.get("decoded") or {}
+    if not isinstance(dec, dict):
+        dec = {}
+
+    # Some senders splat a `text` kw separately
+    if "text" in kw and isinstance(kw["text"], str):
+        dec = dict(dec)
+        dec["text"] = kw["text"]
+
+    if dec:
+        pkt["decoded"] = dec
+
+    return pkt
+
+
+def _deliver(callback, payload, packet):
+    """Back-compat delivery helper.
+    - If callback takes 2 args, call (payload, packet)
+    - Else call (payload)
+    ALWAYS deliver when we have a payload (JSON dict OR TEXT pseudo-dict).
+    """
+    if payload is None:
         return
-    if _is_on("LISTENER_DEBUG"):
+    debug = _is_on("LISTENER_DEBUG")
+    if debug:
         try:
-            print(f"[LISTENER] Delivering to callback: keys={list(parsed_json.keys())}")
+            kind = payload.get("type") if isinstance(payload, dict) else type(payload).__name__
+            print(f"[LISTENER] Delivering kind={kind} to callback")
         except Exception:
-            print("[LISTENER] Delivering to callback (non-dict payload)")
+            print("[LISTENER] Delivering to callback")
     try:
         code = getattr(callback, "__code__", None)
         if code and code.co_argcount >= 2:
-            callback(parsed_json, packet)
+            callback(payload, packet)
         else:
-            callback(parsed_json)
+            callback(payload)
     except TypeError:
-        callback(parsed_json)
+        callback(payload)
 
 
 def start_listener(radio, callback):
@@ -55,31 +94,34 @@ def start_listener(radio, callback):
       • Subscribes ONLY to "meshtastic.receive" (prevents topic arg-spec clashes)
       • Also wires iface.onReceive (covers stacks that use direct callback)
       • Parses JSON from TEXT_MESSAGE_APP (decoded.text or payload bytes)
-      • Optional pass-through for non-JSON text (LISTENER_PASS_THRU=1)
+      • **By default now** also delivers non-JSON text as {"type":"TEXT","data":...}
+        (set LISTENER_TEXT_OFF=1 to disable pass-through)
 
     Env flags:
-      LISTENER_DEBUG=1      → verbose logs (RAW, PUBSB, TEXT, etc)
-      LISTENER_PASS_THRU=1  → deliver non-JSON text as {"type":"TEXT","data":...}
+      LISTENER_DEBUG=1   → verbose logs (RAW, PUBSB, TEXT, etc)
+      LISTENER_TEXT_OFF=1→ disable TEXT pass-through delivery
     """
     iface = getattr(radio, "iface", radio)
     debug = _is_on("LISTENER_DEBUG")
+    passthru = not _is_on("LISTENER_TEXT_OFF")
 
-    def _handle(packet):
+    def _handle(packet: dict):
         if debug:
             print(f"[LISTENER] RAW: {packet}")
         txt = _payload_text(packet)
         if isinstance(txt, str):
+            # Try JSON first
             try:
                 js = json.loads(txt)
-                print(f"[LISTENER] JSON: {js}")
+                if debug:
+                    print(f"[LISTENER] JSON: {js}")
                 _deliver(callback, js, packet)
                 return
             except Exception:
                 if debug:
-                    print(f"[LISTENER] TEXT (non-JSON): {txt[:160]}")
-                if _is_on("LISTENER_PASS_THRU"):
+                    print(f"[LISTENER] TEXT: {txt[:160]}")
+                if passthru:
                     pseudo = {"type": "TEXT", "data": txt}
-                    print(f"[LISTENER] PASS-THRU TEXT → {pseudo}")
                     _deliver(callback, pseudo, packet)
                 return
         else:
@@ -107,10 +149,16 @@ def start_listener(radio, callback):
             except Exception:
                 tn = "meshtastic.receive"
             print(f"[PUBSB] topic={tn}")
+        # Some stacks call with packet kwarg; others splat fields.
         if packet is None:
-            if debug:
-                print("[LISTENER] WARN: _on_pub called without packet")
-            return
+            if kw:
+                packet = _synthesize_packet_from_kwargs(**kw)
+                if debug:
+                    print("[LISTENER] Synthesized packet from kwargs")
+            else:
+                if debug:
+                    print("[LISTENER] WARN: _on_pub called without packet/kwargs; ignoring")
+                return
         _handle(packet)
 
     pub.subscribe(_on_pub, "meshtastic.receive")
