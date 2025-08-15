@@ -36,6 +36,11 @@ def _deliver(callback, parsed_json, packet):
     """
     if parsed_json is None:
         return
+    if _is_on("LISTENER_DEBUG"):
+        try:
+            print(f"[LISTENER] Delivering to callback: keys={list(parsed_json.keys())}")
+        except Exception:
+            print("[LISTENER] Delivering to callback (non-dict payload)")
     try:
         # Try 2-arg style first
         if getattr(callback, "__code__", None) and callback.__code__.co_argcount >= 2:
@@ -60,7 +65,8 @@ def start_listener(radio, callback):
         callback(message, packet) if you want raw context.
 
     Env toggles:
-      • LISTENER_DEBUG=1  → print raw packets as they arrive.
+      • LISTENER_DEBUG=1      → print raw packets as they arrive.
+      • LISTENER_PASS_THRU=1  → deliver non-JSON text as {"type":"TEXT","data":...}
     """
     iface = getattr(radio, "iface", radio)
     debug = _is_on("LISTENER_DEBUG")
@@ -70,20 +76,26 @@ def start_listener(radio, callback):
             print(f"[LISTENER] RAW: {packet}")
         txt = _payload_text(packet)
         if isinstance(txt, str):
-            js = None
             try:
                 js = json.loads(txt)
+                # Always show a JSON line so delivery is visible even if LISTENER_DEBUG is off
                 print(f"[LISTENER] JSON: {js}")
+                _deliver(callback, js, packet)
+                return
             except Exception:
-                # Not JSON; ignore to preserve old behavior
+                # Not JSON; optionally deliver plain text if pass-through is enabled
                 if debug:
                     print(f"[LISTENER] TEXT (non-JSON): {txt[:120]}")
-            _deliver(callback, js, packet)
+                if _is_on('LISTENER_PASS_THRU'):
+                    pseudo = {"type": "TEXT", "data": txt}
+                    print(f"[LISTENER] PASS-THRU TEXT → {pseudo}")
+                    _deliver(callback, pseudo, packet)
+                return
         else:
             # No text payload; nothing to deliver for legacy callback
             if debug:
                 port = (packet.get("decoded") or {}).get("portnum")
-                print(f"[LISTENER] Non-text port={port}")
+                print(f"[LISTENER] Non-text port={port} (no delivery)")
 
     # Attach direct interface callback (covers cases where pubsub isn't used)
     try:
